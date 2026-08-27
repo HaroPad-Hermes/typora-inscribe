@@ -88,7 +88,10 @@
     },
     "signed-in": {
       "title": "已登录 GitHub Copilot",
-      "html": ["<p>您已成功登录 Copilot。</p>", "<p>按“确定”继续。</p>"]
+      "html": [
+        "<p>您已成功登录 Copilot。</p>",
+        "<p>按“确定”继续。</p>"
+      ]
     },
     "sign-in-verification-failed": {
       "title": "GitHub Copilot 登录验证失败",
@@ -155,7 +158,7 @@
     }
   },
   "hint": {
-    "generated-by-copilot": "由 GitHub Copilot 生成"
+    "generated-by-copilot": "由 Inscribe 生成"
   },
   "settings-panel": {
     "title": "Copilot：设置",
@@ -196,5 +199,20 @@
         }
       }
     }
+  },
+  "settings": {
+    "title": "Inscribe 设置",
+    "base-url": "接口地址",
+    "api-key": "API 密钥",
+    "model": "模型",
+    "temperature": "温度",
+    "max-tokens": "最大 token 数",
+    "output-limit": "最大句数（0 = 不限）",
+    "fim-fallback": "FIM 短填充回退",
+    "inline-source": "源码模式内联提示",
+    "arbiter-mode": "空格仲裁模式",
+    "arbiter-url": "仲裁器地址",
+    "save": "保存",
+    "cancel": "取消"
   }
 }

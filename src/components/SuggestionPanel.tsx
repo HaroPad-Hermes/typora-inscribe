@@ -4,8 +4,6 @@ import { useEffect, useRef } from "preact/hooks";
 import { t } from "@/i18n";
 import { getCaretCoordinate } from "@/utils/dom";
 
-import CopilotIcon from "./CopilotIcon";
-
 import "./SuggestionPanel.scss";
 
 export interface SuggestionPanelProps {
@@ -160,15 +158,18 @@ const SuggestionPanel: FC<SuggestionPanelProps> = ({
           flexDirection: "row",
           alignItems: "center",
         }}>
-        <CopilotIcon
-          status="Normal"
-          textColor={textColor}
+        <span
           style={{
             marginRight: "0.4em",
             height: "1em",
             width: "1em",
-          }}
-        />
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: "0.85em",
+          }}>
+          ✦
+        </span>
         <span style={{ marginRight: "0.25em" }}>{t("hint.generated-by-copilot")}</span>
       </div>
     </div>

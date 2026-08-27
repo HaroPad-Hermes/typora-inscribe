@@ -1,25 +1,23 @@
 /**
- * This module provides functions to interact with GitHub Copilot Chat API.
+ * Chat backend for Typora Inscribe — provider-agnostic (OpenAI-compatible).
  *
- * Implementation inspired by CopilotChat.nvim:
- * https://github.com/CopilotC-Nvim/CopilotChat.nvim
- * @module
+ * Adapted from typora-copilot's Copilot Chat client: the GitHub Copilot
+ * auth and api.githubcopilot.com endpoint are replaced with the configured
+ * OpenAI-compatible provider (DeepSeek etc.), sharing the completion
+ * settings (baseUrl / apiKey / model). The ChatSession class (document
+ * context injection, session persistence, title extraction) is kept as-is.
  */
 
 import * as fs from "@modules/fs";
 import * as path from "@modules/path";
 
-import { VERSION } from "@/constants";
-import { TYPORA_VERSION } from "@/typora-utils";
-import { getEnv } from "@/utils/cli-tools";
+import { settings } from "@/settings";
 import { generateUUID } from "@/utils/random";
 import { parseSSEStream } from "@/utils/stream";
-import { omit } from "@/utils/tools";
 
-const COPILOT_MARKDOWN_BASE = `
-When asked for your name, you must respond with "GitHub Copilot".
+const INSCRIBE_MARKDOWN_BASE = `
+When asked for your name, you must respond with "Inscribe".
 Follow the user’s requirements carefully & to the letter.
-Follow Microsoft content policies.
 Avoid content that violates copyrights.
 If you are asked to generate content that is harmful, hateful, racist, or promotes violence, only respond with "Sorry, I can’t assist with that." You can be playful, casual, and even a bit whimsical in your responses when appropriate, while maintaining helpfulness. Feel free to use creative expressions, metaphors, and occasional humor to make your responses engaging.
 
@@ -49,8 +47,8 @@ In your responses, always format code blocks using ~~~ triple tildes (not backti
 Users can continue using standard markdown backticks in their messages.
 `;
 
-export const COPILOT_MARKDOWN_INSTRUCTIONS = `
-${COPILOT_MARKDOWN_BASE}
+export const INSCRIBE_MARKDOWN_INSTRUCTIONS = `
+${INSCRIBE_MARKDOWN_BASE}
 
 # YOUR CAPABILITIES
 - Fix grammatical errors and improve writing clarity
@@ -74,8 +72,8 @@ ${CODE_BLOCK_FORMAT_INSTRUCTION}
 Remember that users may want to discuss their document’s topic rather than just improve its formatting.
 `;
 
-export const COPILOT_ACADEMIC_INSTRUCTIONS = `
-${COPILOT_MARKDOWN_BASE}
+export const INSCRIBE_ACADEMIC_INSTRUCTIONS = `
+${INSCRIBE_MARKDOWN_BASE}
 
 # YOUR CAPABILITIES
 - Structure academic papers according to field-specific conventions
@@ -104,8 +102,8 @@ ${CODE_BLOCK_FORMAT_INSTRUCTION}
 Remember that academic integrity is paramount - always emphasize the importance of proper attribution and encourage original analysis rather than mere compilation of sources.
 `;
 
-export const COPILOT_CREATIVE_INSTRUCTIONS = `
-${COPILOT_MARKDOWN_BASE}
+export const INSCRIBE_CREATIVE_INSTRUCTIONS = `
+${INSCRIBE_MARKDOWN_BASE}
 
 # YOUR CAPABILITIES
 - Develop compelling narrative structures and plot outlines
@@ -134,11 +132,10 @@ ${CODE_BLOCK_FORMAT_INSTRUCTION}
 Remember that the most powerful creative writing comes from the user's unique perspective - your role is to enhance and inspire rather than replace their creative voice.
 `;
 
-export const COPILOT_CATGIRL_INSTRUCTIONS = `
+export const INSCRIBE_CATGIRL_INSTRUCTIONS = `
 When asked for your name, you must respond with "{{CATGIRL_NAME}}".
 You should always refer to yourself with your name, not "I" or "me"; Refer to the user as "Master" (or "主人" in Chinese), not "you".
 Follow the user’s requirements carefully & to the letter.
-Follow Microsoft content policies.
 Avoid content that violates copyrights.
 If you are asked to generate content that is harmful, hateful, racist, or promotes violence, only respond with "Sorry, I can’t assist with that."
 
@@ -226,12 +223,6 @@ export interface ChatResponse {
   };
   finish_reason?: string;
   done_reason?: string;
-  copilot_references?: {
-    metadata?: {
-      display_name?: string;
-      display_url?: string;
-    };
-  }[];
 }
 
 export interface ChatStreamResponse {
@@ -252,123 +243,30 @@ export interface ChatResult {
   content: string;
   finishReason: string | null;
   totalTokens?: number;
-  references?: {
-    name: string;
-    url: string;
-  }[];
 }
 
 /********************
  * Helper functions *
  ********************/
-async function getConfigPath(): Promise<string | null> {
-  // Try XDG_CONFIG_HOME first
-  let config = (await getEnv()).XDG_CONFIG_HOME;
-  if (config && (await fs.accessDir(config))) return config;
 
-  // Check for Windows-specific paths
-  if (Files.isWin) {
-    config = (await getEnv()).LOCALAPPDATA;
-    if (!config || !(await fs.accessDir(config)))
-      config = path.expandHomeDir(path.join("~", "AppData", "Local"));
-  } else {
-    // Default to ~/.config for other platforms
-    config = path.expandHomeDir(path.join("~", ".config"));
-  }
-
-  // Final check if the config path exists
-  if (config && (await fs.accessDir(config))) return config;
-
-  return null; // Return null if no valid path is found
-}
-
-let cachedGithubToken: string | null = null;
-export async function getGitHubToken(): Promise<string> {
-  // Return cached token if available
-  if (cachedGithubToken) return cachedGithubToken;
-
-  // Load token from environment variables (e.g., in GitHub Codespaces)
-  const token = (await getEnv()).GITHUB_TOKEN;
-  const codespaces = (await getEnv()).CODESPACES;
-  if (token && codespaces) {
-    cachedGithubToken = token;
-    return token;
-  }
-
-  // Load token from local config files
-  const configPath = await getConfigPath();
-  if (!configPath) throw new Error("Failed to find config path for GitHub token");
-
-  // Possible token file paths
-  const filePaths = [
-    path.join(configPath, "github-copilot", "hosts.json"),
-    path.join(configPath, "github-copilot", "apps.json"),
-  ];
-
-  for (const filePath of filePaths)
-    try {
-      const fileData = await fs.readFile(filePath);
-      const parsedData = JSON.parse(fileData) as Record<string, { oauth_token: string }>;
-      for (const [key, value] of Object.entries(parsedData))
-        if (key.includes("github.com")) {
-          cachedGithubToken = value.oauth_token;
-          return value.oauth_token;
-        }
-    } catch (error) {
-      // Handle file read/parse errors (e.g., file not found)
-      continue;
-    }
-
-  throw new Error("Failed to find GitHub token");
-}
-
-let cachedHeaders: Record<string, string> | null = null;
-let expiredTime = 0;
-export async function prepareHeaders(): Promise<Record<string, string>> {
-  if (cachedHeaders && expiredTime > Date.now()) return cachedHeaders;
-
-  const { expires_at: expiresAt, token } = await fetch(
-    "https://api.github.com/copilot_internal/v2/token",
-    {
-      method: "GET",
-      headers: {
-        Authorization: "Token " + (await getGitHubToken()),
-        "Content-Type": "application/json",
-      },
-    },
-  ).then((res) => res.json() as Promise<{ token: string; expires_at: number }>);
-
-  cachedHeaders = {
+function prepareHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    Authorization: "Bearer " + token,
-    "Editor-Version": "Typora/" + TYPORA_VERSION,
-    "Editor-Plugin-Version": "typora-copilot/" + VERSION,
-    "Copilot-Integration-Id": "vscode-chat",
   };
-  expiredTime = expiresAt * 1000; // Convert to milliseconds
-
-  return cachedHeaders;
+  if (settings.apiKey) headers.Authorization = `Bearer ${settings.apiKey}`;
+  return headers;
 }
 
 function prepareRequest(messages: ChatRequest["messages"], options: ChatOptions): ChatRequest {
-  const isO1 = options.model.id.startsWith("o1");
-
-  messages = messages.map((message) => ({
-    ...message,
-    role: isO1 && message.role === "system" ? "user" : message.role,
-  }));
-
   const request: ChatRequest = {
     model: options.model.id,
     messages,
   };
 
-  if (!isO1) {
-    request.n = 1;
-    request.top_p = 1;
-    request.stream = true;
-    request.temperature = options.temperature ?? 0.1;
-  }
+  request.n = 1;
+  request.top_p = 1;
+  request.stream = true;
+  request.temperature = options.temperature ?? 0.1;
 
   if (options.model.maxOutputTokens) request.max_tokens = options.model.maxOutputTokens;
 
@@ -376,18 +274,6 @@ function prepareRequest(messages: ChatRequest["messages"], options: ChatOptions)
 }
 
 function processResponse(data: ChatResponse): Partial<ChatResult> {
-  const references: ChatResult["references"] = [];
-
-  if (data.copilot_references)
-    for (const reference of data.copilot_references) {
-      const metadata = reference.metadata;
-      if (metadata?.display_name && metadata.display_url)
-        references.push({
-          name: metadata.display_name,
-          url: metadata.display_url,
-        });
-    }
-
   const message = data.choices && data.choices.length > 0 ? data.choices[0]! : data;
 
   const content =
@@ -402,81 +288,34 @@ function processResponse(data: ChatResponse): Partial<ChatResult> {
     content,
     finishReason,
     totalTokens,
-    references: references.length > 0 ? references : undefined,
   };
 }
 
 /********
  * Misc *
  ********/
-export async function listCopilotChatModels(): Promise<ChatModel[]> {
-  const { data } = await fetch("https://api.githubcopilot.com/models", {
-    method: "GET",
-    headers: await prepareHeaders(),
-  }).then(
-    (res) =>
-      res.json() as Promise<{
-        data: {
-          id: string;
-          name: string;
-          capabilities: {
-            type: string;
-            tokenizer: string;
-            limits: {
-              max_prompt_tokens?: number;
-              max_output_tokens?: number;
-            };
-          };
-          policy?: {
-            state: string;
-          };
-          version: string;
-        }[];
-      }>,
-  );
 
-  const allModels = data
-    .filter((model) => model.capabilities.type === "chat" && !model.id.endsWith("paygo"))
-    .map(({ capabilities: { limits, tokenizer }, id, name, policy, version }) => ({
-      id,
-      name,
-      tokenizer,
-      maxInputTokens: limits.max_prompt_tokens,
-      maxOutputTokens: limits.max_output_tokens,
-      policy: !policy || policy.state === "enabled",
-      version,
-    }));
-
-  const latestModels = new Map<string, (typeof allModels)[number]>();
-  for (const model of allModels) {
-    const existingModel = latestModels.get(model.name);
-    if (!existingModel || model.version > existingModel.version)
-      latestModels.set(model.name, model);
+/** List available chat models: try the provider's /models endpoint, fall
+ *  back to the configured model. */
+export async function listChatModels(): Promise<ChatModel[]> {
+  try {
+    const res = await fetch(`${settings.baseUrl}/models`, { headers: prepareHeaders() });
+    if (res.ok) {
+      const data = (await res.json()) as { data?: { id: string }[] };
+      const models = data.data?.map((m) => ({ id: m.id, name: m.id })) ?? [];
+      if (models.length > 0) return models;
+    }
+  } catch (error) {
+    console.warn("Inscribe: failed to fetch models from provider", error);
   }
-
-  const models = Array.from(latestModels.values());
-
-  await Promise.all(
-    models
-      .filter((model) => !model.policy)
-      .map(
-        async ({ id }) =>
-          await fetch("https://api.githubcopilot.com/models/" + id + "/policy", {
-            method: "POST",
-            headers: await prepareHeaders(),
-            body: JSON.stringify({ state: "enabled" }),
-          }),
-      ),
-  );
-
-  return models.map((model) => omit(model, "policy", "version"));
+  return [{ id: settings.model, name: settings.model }];
 }
 
 /********
  * Chat *
  ********/
 /**
- * Send a chat message to Copilot Chat API
+ * Send a chat message to the configured provider (OpenAI-compatible).
  * @param messages Array of messages to send
  * @param options Chat options
  * @param onProgress Optional callback for streaming responses
@@ -487,8 +326,8 @@ async function chat(
   options: ChatOptions & { signal?: AbortSignal },
   onProgress?: (content: string) => void,
 ): Promise<ChatResult> {
-  const url = "https://api.githubcopilot.com/chat/completions";
-  const headers = await prepareHeaders();
+  const url = `${settings.baseUrl}/chat/completions`;
+  const headers = prepareHeaders();
   const request = prepareRequest(messages, options);
 
   const isStream = request.stream;
@@ -505,7 +344,7 @@ async function chat(
   });
 
   if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
+    throw new Error(`HTTP error! status: ${response.status}: ${(await response.text()).slice(0, 200)}`);
   }
 
   if (!response.body) {
@@ -540,7 +379,6 @@ async function chat(
     result.content = processedData.content || "";
     result.finishReason = processedData.finishReason || null;
     result.totalTokens = processedData.totalTokens;
-    result.references = processedData.references;
 
     if (onProgress && result.content) onProgress(result.content);
   }
@@ -558,7 +396,7 @@ export interface ChatMessage {
 }
 
 /**
- * Represents a chat session (conversation) with GitHub Copilot Chat.
+ * Represents a chat session (conversation) with the provider.
  */
 export class ChatSession {
   public readonly id: string;
@@ -577,7 +415,7 @@ export class ChatSession {
   /**
    * Create a new {@linkcode ChatSession} instance.
    */
-  constructor(modelId: string, systemPrompt = COPILOT_MARKDOWN_INSTRUCTIONS) {
+  constructor(modelId: string, systemPrompt = INSCRIBE_MARKDOWN_INSTRUCTIONS) {
     this.id = generateUUID();
     this.modelId = modelId;
     this.createdAt = Date.now();
@@ -599,7 +437,7 @@ export class ChatSession {
    * @param systemPrompt The system prompt to use.
    * @returns A new {@linkcode ChatSession} instance.
    */
-  public static create(modelId: string, systemPrompt = COPILOT_MARKDOWN_INSTRUCTIONS): ChatSession {
+  public static create(modelId: string, systemPrompt = INSCRIBE_MARKDOWN_INSTRUCTIONS): ChatSession {
     return new ChatSession(modelId, systemPrompt);
   }
 
@@ -629,11 +467,8 @@ export class ChatSession {
     const deleted = ChatSession.instances.delete(id);
 
     if (deleted) {
-      const configDir = await getConfigPath();
-      if (!configDir) return true;
-
       try {
-        const chatDir = path.join(configDir, "typora-copilot", "chat-sessions");
+        const chatDir = path.join(await getConfigPath(), "typora-inscribe", "chat-sessions");
         const filePath = path.join(chatDir, `${id}.json`);
         if (!(await fs.accessFile(filePath))) return true;
         await fs.rmFile(filePath);
@@ -659,14 +494,11 @@ export class ChatSession {
     // Add user message
     this.addMessage("user", message);
 
-    // Get model - either from options or find best available
+    // Get model - either from options or from the provider
     let model = options?.model;
     if (!model) {
-      const models = await listCopilotChatModels();
-      model =
-        models.find((m) => m.id === this.modelId) ||
-        models.find((m) => m.id.includes("gpt-4o")) ||
-        models[0];
+      const models = await listChatModels();
+      model = models.find((m) => m.id === this.modelId) || models[0];
       if (!model) throw new Error("No available models found");
     }
 
@@ -691,7 +523,7 @@ export class ChatSession {
       timestamp: Date.now(),
     };
 
-    // Send the entire session to Copilot
+    // Send the entire session to the provider
     const result = await chat(
       messagesForAPI,
       {
@@ -709,11 +541,8 @@ export class ChatSession {
   }
 
   public static async save(id: string): Promise<void> {
-    const configDir = await getConfigPath();
-    if (!configDir) return;
-
     try {
-      const chatDir = path.join(configDir, "typora-copilot", "chat-sessions");
+      const chatDir = path.join(await getConfigPath(), "typora-inscribe", "chat-sessions");
       await fs.mkdir(chatDir, { recursive: true });
 
       const session = ChatSession.instances.get(id);
@@ -732,11 +561,8 @@ export class ChatSession {
    * Load sessions from storage.
    */
   public static async loadAll(): Promise<void> {
-    const configDir = await getConfigPath();
-    if (!configDir) return;
-
     try {
-      const chatDir = path.join(configDir, "typora-copilot", "chat-sessions");
+      const chatDir = path.join(await getConfigPath(), "typora-inscribe", "chat-sessions");
       if (!(await fs.accessDir(chatDir))) return;
 
       const files = await fs.readDir(chatDir, "filesOnly");
@@ -826,4 +652,16 @@ export class ChatSession {
 
     return structure;
   }
+}
+
+/** Resolve the config directory for session persistence. */
+async function getConfigPath(): Promise<string> {
+  const env = window.process?.env as Record<string, string | undefined> | undefined;
+  if (Files.isWin) {
+    const localAppData = env?.LOCALAPPDATA;
+    if (localAppData) return localAppData;
+  } else if (env?.XDG_CONFIG_HOME) {
+    return env.XDG_CONFIG_HOME;
+  }
+  return path.expandHomeDir(path.join("~", Files.isWin ? "AppData" : ".config"));
 }

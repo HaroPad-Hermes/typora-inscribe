@@ -9,12 +9,12 @@ import { useCallback, useEffect, useRef } from "preact/hooks";
 
 import type { ChatModel } from "@/client/chat";
 import {
-  COPILOT_ACADEMIC_INSTRUCTIONS,
-  COPILOT_CATGIRL_INSTRUCTIONS,
-  COPILOT_CREATIVE_INSTRUCTIONS,
-  COPILOT_MARKDOWN_INSTRUCTIONS,
   ChatSession,
-  listCopilotChatModels,
+  INSCRIBE_ACADEMIC_INSTRUCTIONS,
+  INSCRIBE_CATGIRL_INSTRUCTIONS,
+  INSCRIBE_CREATIVE_INSTRUCTIONS,
+  INSCRIBE_MARKDOWN_INSTRUCTIONS,
+  listChatModels,
 } from "@/client/chat";
 import { t } from "@/i18n";
 
@@ -43,10 +43,10 @@ const ChatPanel: FC<ChatPanelProps> = ({ onClose }) => {
   const sessions = useSignal<ChatSession[]>([]);
 
   const getPrompt = useCallback(() => {
-    if (promptType.value === "Normal") return COPILOT_MARKDOWN_INSTRUCTIONS;
-    if (promptType.value === "Academic") return COPILOT_ACADEMIC_INSTRUCTIONS;
-    if (promptType.value === "Creative") return COPILOT_CREATIVE_INSTRUCTIONS;
-    return COPILOT_CATGIRL_INSTRUCTIONS.replace(
+    if (promptType.value === "Normal") return INSCRIBE_MARKDOWN_INSTRUCTIONS;
+    if (promptType.value === "Academic") return INSCRIBE_ACADEMIC_INSTRUCTIONS;
+    if (promptType.value === "Creative") return INSCRIBE_CREATIVE_INSTRUCTIONS;
+    return INSCRIBE_CATGIRL_INSTRUCTIONS.replace(
       "{{CATGIRL_NAME}}",
       t.test("chat.prompt-style.cat-girl-name") ? t("chat.prompt-style.cat-girl-name") : "Vanilla",
     );
@@ -54,12 +54,12 @@ const ChatPanel: FC<ChatPanelProps> = ({ onClose }) => {
   }, []);
 
   const getPromptType = useCallback((prompt: string) => {
-    if (prompt === COPILOT_MARKDOWN_INSTRUCTIONS) return "Normal";
-    if (prompt === COPILOT_ACADEMIC_INSTRUCTIONS) return "Academic";
-    if (prompt === COPILOT_CREATIVE_INSTRUCTIONS) return "Creative";
+    if (prompt === INSCRIBE_MARKDOWN_INSTRUCTIONS) return "Normal";
+    if (prompt === INSCRIBE_ACADEMIC_INSTRUCTIONS) return "Academic";
+    if (prompt === INSCRIBE_CREATIVE_INSTRUCTIONS) return "Creative";
     if (
       prompt ===
-      COPILOT_CATGIRL_INSTRUCTIONS.replace(
+      INSCRIBE_CATGIRL_INSTRUCTIONS.replace(
         "{{CATGIRL_NAME}}",
         t.test("chat.prompt-style.cat-girl-name") ?
           t("chat.prompt-style.cat-girl-name")
@@ -99,7 +99,7 @@ const ChatPanel: FC<ChatPanelProps> = ({ onClose }) => {
   // Load models and sessions on mount
   useEffect(() => {
     // Load models
-    void listCopilotChatModels().then((modelList) => {
+    void listChatModels().then((modelList) => {
       models.value = modelList;
     });
 
@@ -629,7 +629,7 @@ const MessageList: FC<MessageListProps> = ({
                   <div className="message-author">
                     {promptType === "CatGirl" ?
                       t("chat.prompt-style.cat-girl-name")
-                    : "GitHub Copilot"}
+                    : "Inscribe"}
                   </div>
                 </div>
                 <MessageContent content={message.content} />
@@ -656,7 +656,7 @@ const MessageList: FC<MessageListProps> = ({
               : <CopilotIcon status="InProgress" textColor="var(--text-color)" />}
             </div>
             <div className="message-author">
-              {promptType === "CatGirl" ? t("chat.prompt-style.cat-girl-name") : "GitHub Copilot"}
+              {promptType === "CatGirl" ? t("chat.prompt-style.cat-girl-name") : "Inscribe"}
             </div>
           </div>
           <div className="message-content typing-indicator">

@@ -1,181 +1,137 @@
-import * as path from "@modules/path";
-import { pathToFileURL } from "@modules/url";
-
 import diff from "fast-diff";
 import { debounce } from "radash";
-import semverGte from "semver/functions/gte";
-import semverLt from "semver/functions/lt";
-import semverValid from "semver/functions/valid";
 
-import type { Completion } from "./client";
-import { createCopilotClient } from "./client";
 import { ChatSession } from "./client/chat";
-import CompletionTaskManager from "./completion";
+import { attachChatToggle } from "./chat-toggle";
+import CompletionService from "./completions/service";
 import { attachSuggestionPanel } from "./components/SuggestionPanel";
-import { PLUGIN_DIR, VERSION } from "./constants";
-import { attachFooter } from "./footer";
-import { t } from "./i18n";
+import { VERSION } from "./constants";
 import { logger } from "./logging";
+import { OpenAICompatibleProvider } from "./providers/openai-compat";
 import { settings } from "./settings";
-import type { Position } from "./types/lsp";
-import {
-  TYPORA_VERSION,
-  getActiveFilePathname,
-  getCodeMirror,
-  getWorkspaceFolder,
-  waitUntilEditorInitialized,
-} from "./typora-utils";
-import { runCommand } from "./utils/cli-tools";
+import { getCodeMirror, waitUntilEditorInitialized } from "./typora-utils";
 import { computeTextChanges } from "./utils/diff";
 import { getCaretCoordinate } from "./utils/dom";
-import type { NodeRuntime } from "./utils/node-bridge";
-import {
-  NodeServer,
-  detectAvailableNodeRuntimes,
-  setAllAvailableNodeRuntimes,
-  setCurrentNodeRuntime,
-} from "./utils/node-bridge";
 import { Observable } from "./utils/observable";
-import { replaceTextByRange, setGlobalVar } from "./utils/tools";
+import { replaceTextByRange } from "./utils/tools";
+import type { LspPosition as Position } from "./utils/tools";
 
 import "./styles.scss";
 
-logger.info("Copilot plugin activated. Version:", VERSION);
+logger.info("Inscribe plugin activated. Version:", VERSION);
+
+/** A completion produced by the FIM service, positioned in the document. */
+interface Completion {
+  position: Position;
+  range: { start: Position; end: Position };
+  text: string;
+  displayText: string;
+}
+
+/** Split markdown at a document position into pre/post cursor text. */
+const splitAtPosition = (
+  markdown: string,
+  position: Position,
+): { preCursorText: string; postCursorText: string } => {
+  const eol = Files.useCRLF ? "\r\n" : "\n";
+  const lines = markdown.split(eol);
+  const current = lines[position.line] ?? "";
+
+  const preLines = lines.slice(0, position.line);
+  const preCursorText =
+    (preLines.length > 0 ? preLines.join(eol) + eol : "") + current.slice(0, position.character);
+
+  const postLines = lines.slice(position.line + 1);
+  const postCursorText =
+    current.slice(position.character) +
+    (postLines.length > 0 ? eol + postLines.join(eol) : "");
+
+  return { preCursorText, postCursorText };
+};
 
 /**
- * Fake temporary workspace folder, only used when no folder is opened.
+ * A manager for completion tasks that makes sure exactly one completion task
+ * is active at a time. Replaces typora-copilot's Copilot-LSP-based manager
+ * with the FIM completion service.
  */
-const FAKE_TEMP_WORKSPACE_FOLDER =
-  Files.isWin ?
-    "C:\\Users\\FakeUser\\FakeTyporaCopilotWorkspace"
-  : "/home/fakeuser/faketyporacopilotworkspace";
-const FAKE_TEMP_FILENAME = "typora-copilot-fake-markdown.md";
+class CompletionTaskManager {
+  private _state: "idle" | "requesting" | "pending" = "idle";
+  private activeCleanup: Observable<"accepted" | "rejected"> | null = null;
+  private generationId = 0;
+
+  constructor(private service: CompletionService) {}
+
+  get state(): "idle" | "requesting" | "pending" {
+    return this._state;
+  }
+
+  rejectCurrentIfExist(): void {
+    // Invalidate any in-flight generation
+    this.generationId++;
+    if (this.activeCleanup) {
+      this.activeCleanup.next("rejected");
+      this.activeCleanup = null;
+    }
+    void this.service.abort();
+    this._state = "idle";
+  }
+
+  async start(
+    position: Position,
+    markdown: string,
+    {
+      onCompletion,
+    }: {
+      onCompletion?: (completion: Completion) => Observable<"accepted" | "rejected"> | void;
+    },
+  ): Promise<void> {
+    this.rejectCurrentIfExist();
+    this._state = "requesting";
+    const myId = this.generationId;
+
+    const { preCursorText, postCursorText } = splitAtPosition(markdown, position);
+    const result = await this.service.generateCompletion({ preCursorText, postCursorText });
+
+    if (this.generationId !== myId) return; // rejected or superseded meanwhile
+    if (result === null) {
+      this._state = "idle";
+      return;
+    }
+
+    this._state = "pending";
+
+    const completion: Completion = {
+      position,
+      range: { start: position, end: position },
+      text: result.text,
+      displayText: result.displayText,
+    };
+
+    const cleanup = onCompletion?.(completion) ?? new Observable<"accepted" | "rejected">();
+    cleanup.subscribeOnce(() => {
+      this._state = "idle";
+      if (this.activeCleanup === cleanup) this.activeCleanup = null;
+    });
+    this.activeCleanup = cleanup;
+  }
+}
 
 Promise.defer(async () => {
-  const runtime = await new Promise<NodeRuntime>((resolve) => {
-    const start = Date.now();
-
-    const customNodePath = settings.nodePath;
-    const checkCustomRuntimePromise =
-      customNodePath ?
-        runCommand(`"${customNodePath}" -v`).then((output) => {
-          const version = output.trim();
-          if (!semverValid(version)) {
-            logger.warn(
-              `Failed to check version of custom Node.js path "${customNodePath}", fallback to auto detection`,
-            );
-            throw new Error("Custom runtime invalid");
-          }
-          const runtime = { path: customNodePath, version };
-          setCurrentNodeRuntime(runtime);
-          logger.info(
-            `Using custom Node.js runtime (v${version.replace(/^v/, "")}) at path` +
-              `"${customNodePath}" to start language server.`,
-          );
-          resolve(runtime);
-        })
-      : Promise.reject(new Error("No custom runtime"));
-
-    void detectAvailableNodeRuntimes({
-      onFirstResolved: (runtime) => {
-        const timeSpent = Date.now() - start;
-
-        checkCustomRuntimePromise.catch(() => {
-          setCurrentNodeRuntime(runtime);
-          logger.debug(`Resolved first Node.js runtime in ${timeSpent}ms:`, runtime);
-          logger.info(
-            "Detected " +
-              (runtime.path === "bundled" ? "bundled" : "available") +
-              ` Node.js (v${runtime.version.replace(/^v/, "")})` +
-              (runtime.path === "bundled" ? "" : ` at path "${runtime.path}"`) +
-              ", using it to start language server.",
-          );
-          resolve(runtime);
-        });
-      },
-    }).then((runtimes) => {
-      const timeSpent = Date.now() - start;
-      setAllAvailableNodeRuntimes(runtimes);
-
-      checkCustomRuntimePromise.catch(() => {
-        if (runtimes.length === 0) {
-          logger.error("No available Node.js runtime found");
-          if (Files.isMac)
-            void waitUntilEditorInitialized().then(() => {
-              Files.editor!.EditHelper.showDialog({
-                title: `Typora Copilot: ${t("dialog.warn-nodejs-above-20-required-on-macOS.title")}`,
-                type: "error",
-                html: /* html */ `
-                  <div style="text-align: center; margin-top: 8px;">
-                    ${t("dialog.warn-nodejs-above-20-required-on-macOS.html")}
-                  </div>
-                `,
-                buttons: [t("button.understand")],
-              });
-            });
-          else if (Files.isNode && semverLt(process.version, "20.0.0"))
-            void waitUntilEditorInitialized().then(() => {
-              Files.editor!.EditHelper.showDialog({
-                title: `Typora Copilot: ${t("dialog.warn-nodejs-above-20-required-for-typora-under-1-9.title")}`,
-                type: "error",
-                html: /* html */ `
-                  <div style="text-align: center; margin-top: 8px;">
-                    ${t("dialog.warn-nodejs-above-20-required-for-typora-under-1-9.html").replace(
-                      "{{TYPORA_VERSION}}",
-                      TYPORA_VERSION,
-                    )}
-                  </div>
-                `,
-                buttons: [t("button.understand")],
-              });
-            });
-          else if (Files.isNode && semverGte(TYPORA_VERSION, "1.10.0"))
-            void waitUntilEditorInitialized().then(() => {
-              Files.editor!.EditHelper.showDialog({
-                title: `Typora Copilot: ${t("dialog.warn-nodejs-above-20-required-for-typora-above-1-10.title")}`,
-                type: "error",
-                html: /* html */ `
-                  <div style="text-align: center; margin-top: 8px;">
-                    ${t("dialog.warn-nodejs-above-20-required-for-typora-above-1-10.html").replace(
-                      "{{TYPORA_VERSION}}",
-                      TYPORA_VERSION,
-                    )}
-                  </div>
-                `,
-                buttons: [t("button.understand")],
-              });
-            });
-
-          resolve({ path: "not found", version: "unknown" });
-        } else {
-          logger.debug(`Resolved all available Node.js runtimes in ${timeSpent}ms:`, runtimes);
-        }
-      });
-    });
-  });
-
-  const server =
-    runtime.path === "not found" ?
-      NodeServer.getMock()
-    : await NodeServer.start(
-        runtime.path,
-        path.join(PLUGIN_DIR, "language-server", "language-server.cjs"),
-      );
-  if (server.pid !== -1) logger.debug("Copilot LSP server started. PID:", server.pid);
-
-  /**
-   * Copilot LSP client.
-   */
-  const copilot = createCopilotClient(server, { logging: "debug" });
-  setGlobalVar("copilot", copilot);
-
   await waitUntilEditorInitialized();
+
+  /*****************************
+   * Initialize AI services    *
+   *****************************/
+  const provider = new OpenAICompatibleProvider(settings);
+  const completionService = new CompletionService(provider, settings);
+  const taskManager = new CompletionTaskManager(completionService);
 
   /*********************
    * Utility functions *
    *********************/
   /**
    * Insert completion text to editor.
+   * @param caretPosition The caret position at request time.
    * @param completion Completion options.
    * @returns
    */
@@ -256,7 +212,7 @@ Promise.defer(async () => {
           }
         }
 
-        if (handled && settings.useInlineCompletionTextInPreviewCodeBlocks) {
+        if (handled && settings.useInlineCompletionTextInSource) {
           const subCmCompletion = { ...completion };
 
           // Set `position` and `range` to be relative to `startPos`
@@ -292,8 +248,6 @@ Promise.defer(async () => {
       backgroundColor,
       fontSize,
     });
-
-    copilot.notification.notifyShown({ uuid: completion.uuid });
 
     const insertCompletionText = () => {
       // Check whether it is safe to just use `insertText` to insert completion text,
@@ -369,7 +323,7 @@ Promise.defer(async () => {
    */
   const insertCompletionTextToCodeMirror = (
     cm: CodeMirror.Editor,
-    { displayText, position, range, text, uuid }: Completion,
+    { displayText, position, range, text }: Completion,
   ): Observable<"accepted" | "rejected"> | void => {
     interface CodeMirrorHistory {
       done: readonly object[];
@@ -416,17 +370,12 @@ Promise.defer(async () => {
     // registered as a new operation command
     if (!sourceView.inSourceMode) editor.undo.removeLastRegisteredOperationCommand();
 
-    copilot.notification.notifyShown({ uuid });
-
     /**
      * Reject the completion.
      *
      * **Warning:** It should only be called when no more changes is applied after
      * completion text is inserted, otherwise history will be corrupted.
      */
-    // NOTE: The check for `rejectedOrAccepted` is intentionally placed inside each callers instead
-    // of in `reject` and `accept` functions, because some callers may not call `reject` or `accept`
-    // immediately, but the `rejectedOrAccepted` flag itself should be set immediately.
     let rejectedOrAccepted = false;
     const reject = () => {
       const textMarkerRange = textMarker.find();
@@ -551,12 +500,10 @@ Promise.defer(async () => {
    */
   const insertSuggestionPanelToCodeMirror = (
     cm: CodeMirror.Editor,
-    { displayText, range, text, uuid }: Completion,
+    { displayText, range, text }: Completion,
   ): Observable<"accepted" | "rejected"> | void => {
     // Insert a suggestion panel below the cursor
     const unattachSuggestionPanel = attachSuggestionPanel(displayText, null, { cm });
-
-    copilot.notification.notifyShown({ uuid });
 
     const insertCompletionText = () => {
       // Insert completion text
@@ -578,7 +525,6 @@ Promise.defer(async () => {
      * Intercept `Tab` key once and change it to accept completion.
      * @param event The keyboard event.
      */
-    // eslint-disable-next-line sonarjs/no-identical-functions
     const keydownHandler = (_: CodeMirror.Editor, event: KeyboardEvent) => {
       // Prevent tab key to trigger tab once
       if (event.key === "Tab") {
@@ -604,72 +550,18 @@ Promise.defer(async () => {
   /*******************
    * Change handlers *
    *******************/
-  /**
-   * Callback to be invoked when workspace folder changed.
-   * @param newFolder The new workspace folder.
-   * @param oldFolder The old workspace folder.
-   */
-  const onChangeWorkspaceFolder = (newFolder: string | null, oldFolder: string | null) => {
-    copilot.notification.workspace.didChangeWorkspaceFolders({
-      event: {
-        added:
-          newFolder ? [{ uri: pathToFileURL(newFolder).href, name: path.basename(newFolder) }] : [],
-        removed:
-          oldFolder ? [{ uri: pathToFileURL(oldFolder).href, name: path.basename(oldFolder) }] : [],
-      },
-    });
-  };
-
-  /**
-   * Callback to be invoked when active file changed.
-   * @param newPathname The new active file pathname.
-   * @param oldPathname The old active file pathname.
-   */
-  const onChangeActiveFile = (newPathname: string | null, oldPathname: string | null) => {
-    if (oldPathname) {
-      taskManager.rejectCurrentIfExist();
-      copilot.notification.textDocument.didClose({
-        textDocument: { uri: pathToFileURL(oldPathname).href },
-      });
-    }
-
-    if (newPathname) {
-      copilot.version = 0;
-      copilot.notification.textDocument.didOpen({
-        textDocument: {
-          uri: pathToFileURL(newPathname).href,
-          languageId: "markdown",
-          version: 0,
-          text: editor.getMarkdown(),
-        },
-      });
-    }
-  };
 
   /**
    * Trigger completion.
    */
   const triggerCompletion = debounce({ delay: 500 }, () => {
-    logger.debug("Changing markdown", {
-      from: state.markdownUsedInLastCompletion,
-      to: state.markdown,
-    });
+    if (!settings.apiKey) return;
 
-    // Update state
-    state.markdownUsedInLastCompletion = state.markdown;
-
-    /* Tell Copilot that file has changed */
-    const version = ++copilot.version;
-    copilot.notification.textDocument.didChange({
-      textDocument: { version, uri: pathToFileURL(taskManager.activeFilePathname).href },
-      contentChanges: [{ text: state.markdown }],
-    });
-
-    /* If caret position is available, fetch completion from Copilot */
+    /* If caret position is available, fetch completion */
     if (state.caretPosition) {
       const caretPosition = state.caretPosition;
       logger.debug("Triggering completion at", caretPosition);
-      taskManager.start(caretPosition, {
+      void taskManager.start(caretPosition, state.markdown, {
         onCompletion: (completion) => {
           if (editor.sourceView.inSourceMode)
             if (settings.useInlineCompletionTextInSource)
@@ -700,75 +592,14 @@ Promise.defer(async () => {
   if (!sourceView.cm) sourceView.prep();
   const cm = sourceView.cm!;
 
-  /***************************
-   * Initialize task manager *
-   ***************************/
-  const taskManager = new CompletionTaskManager(copilot, {
-    workspaceFolder: getWorkspaceFolder() ?? FAKE_TEMP_WORKSPACE_FOLDER,
-    activeFilePathname:
-      getActiveFilePathname() ?? path.join(FAKE_TEMP_WORKSPACE_FOLDER, FAKE_TEMP_FILENAME),
-  });
-
   /***********
    * UI Misc *
    ***********/
-  attachFooter(copilot);
-
-  /**************************
-   * Initialize Copilot LSP *
-   **************************/
-  /* Send `initialize` request */
-  await copilot.request.initialize({
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    processId: window.process?.pid ?? null,
-    capabilities: { workspace: { workspaceFolders: true } },
-    trace: "verbose",
-    rootUri: taskManager.workspaceFolder && pathToFileURL(taskManager.workspaceFolder).href,
-    ...(taskManager.workspaceFolder && {
-      workspaceFolders: [
-        {
-          uri: pathToFileURL(taskManager.workspaceFolder).href,
-          name: path.basename(taskManager.workspaceFolder),
-        },
-      ],
-    }),
-    // Register editor info
-    initializationOptions: {
-      editorInfo: { name: "Typora", version: TYPORA_VERSION },
-      editorPluginInfo: { name: "typora-copilot", version: VERSION },
-    },
-  });
-  copilot.notification.initialized();
-
-  await copilot.request.getVersion();
-
-  /* Send initial didOpen */
-  if (taskManager.activeFilePathname) onChangeActiveFile(taskManager.activeFilePathname, null);
+  attachChatToggle();
 
   /************
    * Watchers *
    ************/
-  /* Interval to update workspace */
-  setInterval(() => {
-    const newWorkspaceFolder = getWorkspaceFolder() ?? FAKE_TEMP_WORKSPACE_FOLDER;
-    if (newWorkspaceFolder !== taskManager.workspaceFolder) {
-      const oldWorkspaceFolder = taskManager.workspaceFolder;
-      taskManager.workspaceFolder = newWorkspaceFolder;
-      onChangeWorkspaceFolder(newWorkspaceFolder, oldWorkspaceFolder);
-    }
-  }, 100);
-
-  const checkActiveFileChange = (): boolean => {
-    const newActiveFilePathname =
-      getActiveFilePathname() ?? path.join(FAKE_TEMP_WORKSPACE_FOLDER, FAKE_TEMP_FILENAME);
-    if (newActiveFilePathname !== taskManager.activeFilePathname) {
-      const oldActiveFilePathname = taskManager.activeFilePathname;
-      taskManager.activeFilePathname = newActiveFilePathname;
-      onChangeActiveFile(newActiveFilePathname, oldActiveFilePathname);
-      return true;
-    }
-    return false;
-  };
 
   /* Reject completion on toggle source mode */
   sourceView.on("beforeToggle", (_, on) => {
@@ -780,8 +611,6 @@ Promise.defer(async () => {
 
   /* Watch for markdown change in live preview mode */
   editor.on("change", (_, { newMarkdown }) => {
-    if (checkActiveFileChange()) return;
-
     if (settings.disableCompletions) return;
     if (sourceView.inSourceMode) return;
 
@@ -895,8 +724,6 @@ Promise.defer(async () => {
 
   /* Watch for markdown change in source mode */
   cm.on("change", (cm): void => {
-    if (checkActiveFileChange()) return;
-
     if (settings.disableCompletions) return;
     if (!editor.sourceView.inSourceMode) return;
 

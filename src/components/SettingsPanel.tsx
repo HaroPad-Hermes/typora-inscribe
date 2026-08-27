@@ -1,24 +1,7 @@
-/* eslint-disable react-hooks/rules-of-hooks */
-import type { Signal } from "@preact/signals";
-import { useSignal } from "@preact/signals";
-import { useMemo } from "preact/hooks";
-import { debounce, mapValues } from "radash";
-import semverGte from "semver/functions/gte";
-import semverValid from "semver/functions/valid";
-import { kebabCase } from "string-ts";
+import { useState } from "preact/hooks";
 
-import { t } from "@/i18n";
-import type { Settings } from "@/settings";
 import { settings } from "@/settings";
-import type { _Id } from "@/types/tools";
-import { runCommand } from "@/utils/cli-tools";
-import type { NodeRuntime } from "@/utils/node-bridge";
-import {
-  getAllAvailableNodeRuntimes,
-  getCurrentNodeRuntime,
-  setCurrentNodeRuntime,
-} from "@/utils/node-bridge";
-import { entriesOf, keysOf } from "@/utils/tools";
+import { t } from "@/i18n";
 
 import DropdownWithInput from "./DropdownWithInput";
 import ModalBody from "./ModalBody";
@@ -26,439 +9,151 @@ import ModalCloseButton from "./ModalCloseButton";
 import ModalContent from "./ModalContent";
 import ModalOverlay from "./ModalOverlay";
 import ModalTitle from "./ModalTitle";
-import ModalHeader from "./ModelHeader";
 import Switch from "./Switch";
-import { NodejsIcon, SettingsIcon } from "./icons";
-
-interface SettingControl<K extends keyof Settings> {
-  position: "right" | "bottom";
-  component: (key: K, signal: Signal<Settings[K]>) => preact.JSX.Element;
-}
-type TypedSettingControl<T> = SettingControl<
-  keyof { [K in keyof Settings as Settings[K] extends T ? K : never]: void }
->;
-
-const BooleanSettingControl: TypedSettingControl<boolean> = {
-  position: "right",
-  component: (key, signal) => (
-    <Switch
-      value={signal.value}
-      onChange={(value) => {
-        signal.value = value;
-        settings[key] = value;
-      }}
-    />
-  ),
-};
-
-type Categories = Record<string, { [K in keyof Settings]?: SettingControl<K> }>;
-const categories = {
-  general: {
-    disableCompletions: BooleanSettingControl,
-    useInlineCompletionTextInSource: BooleanSettingControl,
-    useInlineCompletionTextInPreviewCodeBlocks: BooleanSettingControl,
-  },
-  nodejs: {
-    nodePath: {
-      position: "bottom",
-      component: (key, signal) => {
-        const optionAuto = (() => {
-          if (getAllAvailableNodeRuntimes().length === 0) return null;
-          const { path, version } =
-            getAllAvailableNodeRuntimes().find(({ path }) => path === "bundled") ??
-            getAllAvailableNodeRuntimes()[0]!;
-          return (
-            `${t("settings-panel.nodejs.constant.PATH_AUTO_DETECT")} ` +
-            `(${path === "bundled" ? t("settings-panel.nodejs.constant.PATH_BUNDLED") : path}, ` +
-            `${version.startsWith("v") ? version : "v" + version})`
-          );
-        })();
-        const options = [
-          ...(optionAuto ? [optionAuto] : []),
-          ...getAllAvailableNodeRuntimes()
-            .filter(({ path }) => path !== "bundled")
-            .map(
-              ({ path, version }) =>
-                `${path} (${version.startsWith("v") ? version : "v" + version})`,
-            ),
-        ];
-
-        const currentVersion = useSignal(getCurrentNodeRuntime().version);
-
-        const inputType = useSignal<"default" | "passed" | "failed">(
-          getCurrentNodeRuntime().path === "not found" ? "failed" : "default",
-        );
-        const forceFocusInput = useSignal(false);
-        const info = useSignal(
-          getCurrentNodeRuntime().path === "not found" ?
-            options.length > 0 ?
-              t("settings-panel.nodejs.node-path.message.warn-empty-select-or-input")
-            : t("settings-panel.nodejs.node-path.message.warn-empty-input")
-          : "",
-        );
-        const infoColor = useSignal(
-          getCurrentNodeRuntime().path === "not found" ?
-            /* text-red-500 */ "#f56565"
-          : /* text-blue-500 */ "#4299e1",
-        );
-        const dropdownMarginTop = useSignal(
-          getCurrentNodeRuntime().path === "not found" ? "1.75rem" : "default",
-        );
-
-        const parseOption = (option: string): NodeRuntime => {
-          const parts = option.split(" ");
-
-          if (option === optionAuto) {
-            let path = parts
-              .slice(0, -1)
-              .join(" ")
-              .slice(t("settings-panel.nodejs.constant.PATH_AUTO_DETECT").length + 2, -1);
-            if (path === t("settings-panel.nodejs.constant.PATH_BUNDLED")) path = "bundled";
-            const version = parts[parts.length - 1]!.slice(0, -1);
-            return { path, version };
-          }
-
-          if (parts.length < 2) return { path: option, version: "unknown" };
-          const lastPart = parts[parts.length - 1];
-          if (!lastPart || !lastPart.startsWith("(") || !lastPart.endsWith(")"))
-            return { path: option, version: "unknown" };
-          const version = lastPart.slice(1, -1);
-          if (!semverValid(version)) return { path: option, version: "unknown" };
-          return {
-            path: parts.slice(0, -1).join(" "),
-            version: version.startsWith("v") ? version : `v${version}`,
-          };
-        };
-
-        const retrieveRuntimeVersion = useMemo(
-          () =>
-            debounce(
-              { delay: 500 },
-              (() => {
-                let latestTimestamp = 0;
-
-                return (path: string) => {
-                  const timestamp = Date.now();
-                  latestTimestamp = timestamp;
-
-                  runCommand(`"${path}" -v`)
-                    .then((output) => {
-                      if (latestTimestamp !== timestamp) return;
-                      const version = output.trim();
-                      if (!version) throw new Error("No version found");
-                      if (!semverValid(version)) throw new Error(`Invalid version: ${version}`);
-                      if (semverGte(version, "20.0.0")) {
-                        setCurrentNodeRuntime({ path, version });
-                        settings[key] = path;
-                        signal.value = path;
-                        currentVersion.value = version;
-                        inputType.value = "passed";
-                        forceFocusInput.value = false;
-                        info.value = t("settings-panel.nodejs.node-path.message.updated")
-                          .replace("{{PATH}}", path)
-                          .replace("{{VERSION}}", version);
-                        infoColor.value = "#48bb78"; // text-green-500
-                      } else {
-                        inputType.value = "failed";
-                        forceFocusInput.value = false;
-                        info.value = t(
-                          "settings-panel.nodejs.node-path.message.warn-invalid-version",
-                        )
-                          .replace("{{PATH}}", path)
-                          .replace("{{VERSION}}", version);
-                        infoColor.value = "#f56565"; // text-red-500
-                      }
-                    })
-                    .catch(() => {
-                      if (latestTimestamp !== timestamp) return;
-                      inputType.value = "failed";
-                      forceFocusInput.value = false;
-                      info.value = t(
-                        "settings-panel.nodejs.node-path.message.warn-invalid",
-                      ).replace("{{PATH}}", path);
-                      infoColor.value = "#f56565"; // text-red-500
-                    });
-                };
-              })(),
-            ),
-          [currentVersion, key, signal, inputType, forceFocusInput, info, infoColor],
-        );
-
-        return (
-          <div style={{ width: "100%", marginTop: "0.75rem" }}>
-            <DropdownWithInput
-              type={inputType.value}
-              forceFocus={forceFocusInput.value}
-              dropdownMarginTop={dropdownMarginTop.value}
-              options={options}
-              value={
-                signal.value === null ?
-                  (optionAuto ?? "")
-                : signal.value +
-                  (currentVersion.value === "unknown" ? "" : ` (${currentVersion.value})`)
-              }
-              onChange={(option) => {
-                const runtime = parseOption(option);
-                signal.value = option === optionAuto ? null : runtime.path;
-                currentVersion.value = runtime.version;
-
-                if (!runtime.path) {
-                  inputType.value = "failed";
-                  info.value =
-                    options.length > 0 ?
-                      t("settings-panel.nodejs.node-path.message.warn-empty-select-or-input")
-                    : t("settings-panel.nodejs.node-path.message.warn-empty-input");
-                  infoColor.value = "#f56565"; // text-red-500
-                  dropdownMarginTop.value = "1.75rem";
-                  return;
-                }
-
-                if (options.includes(option)) {
-                  setCurrentNodeRuntime(runtime);
-                  if (option === optionAuto) settings.clear(key);
-                  else settings[key] = runtime.path;
-                  inputType.value = "passed";
-                  forceFocusInput.value = false;
-                  info.value =
-                    option === optionAuto ?
-                      t("settings-panel.nodejs.node-path.message.updated-auto")
-                    : t("settings-panel.nodejs.node-path.message.updated")
-                        .replace("{{PATH}}", runtime.path)
-                        .replace("{{VERSION}}", runtime.version);
-                  infoColor.value = "#48bb78"; // text-green-500
-                } else {
-                  inputType.value = "default";
-                  forceFocusInput.value = true;
-                  info.value = t(
-                    "settings-panel.nodejs.node-path.message.retrieving-version",
-                  ).replace("{{PATH}}", runtime.path);
-                  infoColor.value = "#4299e1"; // text-blue-500
-                  dropdownMarginTop.value = "1.75rem";
-                  retrieveRuntimeVersion(runtime.path);
-                }
-              }}
-              onOpenDropdown={() => {
-                if (inputType.value === "passed") inputType.value = "default";
-              }}
-              onCloseDropdown={() => {
-                if (inputType.value === "default" && !forceFocusInput.value) info.value = "";
-                dropdownMarginTop.value = "default";
-              }}
-            />
-
-            {info.value && (
-              <div
-                style={{
-                  marginTop: "0.5rem",
-                  fontSize: "0.75rem",
-                  lineHeight: 1,
-                  color: infoColor.value,
-                }}>
-                {info.value}
-              </div>
-            )}
-          </div>
-        );
-      },
-    },
-  },
-} as const satisfies Categories;
-
-const categoryIcons = {
-  general: <SettingsIcon size={18} />,
-  nodejs: <NodejsIcon size={18} />,
-} as const satisfies Record<keyof typeof categories, preact.JSX.Element>;
-
-type CategoriesSignals<C extends Categories> = _Id<{
-  [K in keyof C]: {
-    [P in keyof C[K]]: C[K][P] extends SettingControl<infer K> ? Signal<Settings[K]> : never;
-  };
-}>;
 
 export interface SettingsPanelProps {
-  open?: boolean;
-  onClose?: () => void;
+  onClose: () => void;
 }
 
+const ARBITER_MODES = ["auto", "local", "api", "off"];
+
 const SettingsPanel: FC<SettingsPanelProps> = ({ onClose }) => {
-  const selectedCategory = useSignal(Object.keys(categories)[0] as keyof typeof categories);
-  const signals = mapValues(categories, (category) =>
-    mapValues(category as never, (_, key) => useSignal(settings[key])),
-  ) as CategoriesSignals<typeof categories>;
+  const [baseUrl, setBaseUrl] = useState(settings.baseUrl);
+  const [apiKey, setApiKey] = useState(settings.apiKey);
+  const [model, setModel] = useState(settings.model);
+  const [temperature, setTemperature] = useState(String(settings.temperature));
+  const [maxTokens, setMaxTokens] = useState(String(settings.maxTokens));
+  const [outputLimitSentences, setOutputLimitSentences] = useState(
+    String(settings.outputLimitSentences),
+  );
+  const [fimShortFillFallback, setFimShortFillFallback] = useState(settings.fimShortFillFallback);
+  const [arbiterMode, setArbiterMode] = useState(settings.arbiterMode);
+  const [arbiterBaseUrl, setArbiterBaseUrl] = useState(settings.arbiterBaseUrl);
+  const [useInlineInSource, setUseInlineInSource] = useState(
+    settings.useInlineCompletionTextInSource,
+  );
+
+  const save = () => {
+    settings.baseUrl = baseUrl.trim() || "https://api.deepseek.com/v1";
+    settings.apiKey = apiKey.trim();
+    settings.model = model.trim() || "deepseek-v4-flash";
+    const temp = parseFloat(temperature);
+    settings.temperature = Number.isFinite(temp) ? Math.min(Math.max(temp, 0), 2) : 0.5;
+    const mt = parseInt(maxTokens, 10);
+    settings.maxTokens = Number.isFinite(mt) ? Math.min(Math.max(mt, 1), 1000) : 40;
+    const ols = parseInt(outputLimitSentences, 10);
+    settings.outputLimitSentences = Number.isFinite(ols) ? Math.max(ols, 0) : 1;
+    settings.fimShortFillFallback = fimShortFillFallback;
+    settings.arbiterMode = ARBITER_MODES.includes(arbiterMode)
+      ? (arbiterMode as typeof settings.arbiterMode)
+      : "auto";
+    settings.arbiterBaseUrl = arbiterBaseUrl.trim() || "http://127.0.0.1:8099";
+    settings.useInlineCompletionTextInSource = useInlineInSource;
+    onClose();
+  };
+
+  const fieldStyle: preact.CSSProperties = {
+    display: "flex",
+    flexDirection: "column",
+    gap: "0.25rem",
+    marginBottom: "0.75rem",
+  };
+  const labelStyle: preact.CSSProperties = { fontSize: "0.9em", opacity: 0.85 };
+  const inputStyle: preact.CSSProperties = {
+    padding: "0.35rem 0.5rem",
+    borderRadius: "0.375rem",
+    border: "1px solid var(--border-color, rgba(128,128,128,0.4))",
+    background: window.getComputedStyle(document.body).backgroundColor,
+    color: window.getComputedStyle(document.body).color,
+    font: "inherit",
+    width: "100%",
+    boxSizing: "border-box",
+  };
 
   return (
     <ModalOverlay onClose={onClose}>
-      <ModalContent>
-        <ModalHeader>
-          <ModalTitle>{t("settings-panel.title")}</ModalTitle>
-          <ModalCloseButton onClick={onClose} />
-        </ModalHeader>
-        <ModalBody style={{ paddingTop: "1rem", display: "flex", flexDirection: "row" }}>
-          <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-start" }}>
-            {keysOf(categories).map((category, i, arr) => (
-              <MenuButton
-                key={category}
-                selected={selectedCategory.value === category}
-                onClick={() => {
-                  selectedCategory.value = category;
-                }}
-                style={{ marginBottom: i === arr.length - 1 ? "0" : "0.5rem" }}>
-                {categoryIcons[category]}
-                <span style={{ marginLeft: "0.375rem" }}>
-                  {t(`settings-panel.${category}.title`)}
-                </span>
-              </MenuButton>
-            ))}
-          </div>
-
+      <ModalBody>
+        <ModalContent>
           <div
             style={{
-              paddingLeft: "2rem",
-              paddingRight: "1rem",
-              paddingTop: "0.25rem",
-              paddingBottom: "1rem",
-              fontSize: "0.875rem",
-              width: "100%",
               display: "flex",
-              flexDirection: "column",
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "0 0.25rem 0.5rem",
             }}>
-            {t.test(`settings-panel.${selectedCategory.value}.note`) && (
-              <div style={{ fontSize: "0.75rem", lineHeight: 1, opacity: 0.75 }}>
-                <span>* {t.tran(`settings-panel.${selectedCategory.value}.note`)}</span>
-                <hr
-                  style={{
-                    height: 0,
-                    margin: "1rem 0",
-                    border: "none",
-                    background: "transparent",
-                    borderTop: "1px dashed",
-                  }}
-                />
-              </div>
-            )}
-            {entriesOf(categories[selectedCategory.value]).map(([key, control], i, arr) => (
-              <>
-                <div key={key} style={{ width: "100%" }}>
-                  {(() => {
-                    if (control.position === "right")
-                      return (
-                        <>
-                          <div
-                            style={{
-                              width: "100%",
-                              display: "flex",
-                              flexDirection: "row",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                            }}>
-                            <span>
-                              {t.tran(
-                                `settings-panel.${selectedCategory.value}.${kebabCase(key)}.label`,
-                              )}
-                            </span>
-                            {control.component(
-                              key as never,
-                              (signals[selectedCategory.value] as never)[key],
-                            )}
-                          </div>
-                          <div
-                            style={{
-                              marginTop: "0.5rem",
-                              fontSize: "0.75rem",
-                              lineHeight: 1,
-                              opacity: 0.75,
-                            }}>
-                            {t.tran(
-                              `settings-panel.${selectedCategory.value}.${kebabCase(key)}.description`,
-                            )}
-                          </div>
-                        </>
-                      );
-                    /* position: bottom */
-                    return (
-                      <>
-                        <div>
-                          {t.tran(
-                            `settings-panel.${selectedCategory.value}.${kebabCase(key)}.label`,
-                          )}
-                        </div>
-                        <div
-                          style={{
-                            marginTop: "0.5rem",
-                            fontSize: "0.75rem",
-                            lineHeight: 1,
-                            opacity: 0.75,
-                          }}>
-                          {t.tran(
-                            `settings-panel.${selectedCategory.value}.${kebabCase(key)}.description`,
-                          )}
-                        </div>
-                        <div style={{ marginTop: "0.5rem" }}>
-                          {control.component(
-                            key as never,
-                            (signals[selectedCategory.value] as never)[key],
-                          )}
-                        </div>
-                      </>
-                    );
-                  })()}
-
-                  {t.test(`settings-panel.${selectedCategory.value}.${kebabCase(key)}.warning`) && (
-                    <div
-                      style={{
-                        marginTop: "0.5rem",
-                        fontSize: "0.75rem",
-                        lineHeight: 1,
-                        color: "#ef4444",
-                      }}>
-                      {t.tran(`settings-panel.${selectedCategory.value}.${kebabCase(key)}.warning`)}
-                    </div>
-                  )}
-                </div>
-
-                {i !== arr.length - 1 && (
-                  <hr style={{ width: "100%", margin: "1.375rem 0 1rem 0" }} />
-                )}
-              </>
-            ))}
+            <ModalTitle>{t("settings.title")}</ModalTitle>
+            <ModalCloseButton onClick={onClose} />
           </div>
-        </ModalBody>
-      </ModalContent>
+
+          <div style={{ padding: "0.5rem", maxHeight: "70vh", overflowY: "auto" }}>
+            <div style={fieldStyle}>
+              <label style={labelStyle}>{t("settings.base-url")}</label>
+              <input style={inputStyle} value={baseUrl} onInput={(e) => setBaseUrl((e.target as HTMLInputElement).value)} placeholder="https://api.deepseek.com/v1" />
+            </div>
+
+            <div style={fieldStyle}>
+              <label style={labelStyle}>{t("settings.api-key")}</label>
+              <input style={inputStyle} type="password" value={apiKey} onInput={(e) => setApiKey((e.target as HTMLInputElement).value)} placeholder="sk-..." />
+            </div>
+
+            <div style={fieldStyle}>
+              <label style={labelStyle}>{t("settings.model")}</label>
+              <input style={inputStyle} value={model} onInput={(e) => setModel((e.target as HTMLInputElement).value)} placeholder="deepseek-v4-flash" />
+            </div>
+
+            <div style={{ ...fieldStyle, flexDirection: "row", alignItems: "center", gap: "1rem" }}>
+              <label style={{ ...labelStyle, width: "50%" }}>{t("settings.temperature")}</label>
+              <input style={{ ...inputStyle, width: "50%" }} value={temperature} onInput={(e) => setTemperature((e.target as HTMLInputElement).value)} />
+            </div>
+
+            <div style={{ ...fieldStyle, flexDirection: "row", alignItems: "center", gap: "1rem" }}>
+              <label style={{ ...labelStyle, width: "50%" }}>{t("settings.max-tokens")}</label>
+              <input style={{ ...inputStyle, width: "50%" }} value={maxTokens} onInput={(e) => setMaxTokens((e.target as HTMLInputElement).value)} />
+            </div>
+
+            <div style={{ ...fieldStyle, flexDirection: "row", alignItems: "center", gap: "1rem" }}>
+              <label style={{ ...labelStyle, width: "50%" }}>{t("settings.output-limit")}</label>
+              <input style={{ ...inputStyle, width: "50%" }} value={outputLimitSentences} onInput={(e) => setOutputLimitSentences((e.target as HTMLInputElement).value)} />
+            </div>
+
+            <div style={{ ...fieldStyle, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+              <label style={labelStyle}>{t("settings.fim-fallback")}</label>
+              <Switch value={fimShortFillFallback} onChange={setFimShortFillFallback} />
+            </div>
+
+            <div style={{ ...fieldStyle, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+              <label style={labelStyle}>{t("settings.inline-source")}</label>
+              <Switch value={useInlineInSource} onChange={setUseInlineInSource} />
+            </div>
+
+            <div style={fieldStyle}>
+              <label style={labelStyle}>{t("settings.arbiter-mode")}</label>
+              <DropdownWithInput
+                options={ARBITER_MODES}
+                value={arbiterMode}
+                onChange={(v) => setArbiterMode(v as typeof arbiterMode)}
+              />
+            </div>
+
+            <div style={fieldStyle}>
+              <label style={labelStyle}>{t("settings.arbiter-url")}</label>
+              <input style={inputStyle} value={arbiterBaseUrl} onInput={(e) => setArbiterBaseUrl((e.target as HTMLInputElement).value)} placeholder="http://127.0.0.1:8099" />
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem", marginTop: "1rem" }}>
+              <button type="button" className="unset-button" style={{ padding: "0.4rem 1rem", borderRadius: "0.375rem", border: "1px solid rgba(128,128,128,0.4)", cursor: "pointer" }} onClick={onClose}>
+                {t("settings.cancel")}
+              </button>
+              <button type="button" className="unset-button" style={{ padding: "0.4rem 1rem", borderRadius: "0.375rem", background: "#18a058", color: "#fff", cursor: "pointer" }} onClick={save}>
+                {t("settings.save")}
+              </button>
+            </div>
+          </div>
+        </ModalContent>
+      </ModalBody>
     </ModalOverlay>
   );
-};
-
-const MenuButton: FC<{
-  selected?: boolean;
-  onClick?: () => void;
-  style?: preact.CSSProperties;
-}> = ({ children, onClick, selected = false, style: additionalStyle }) => {
-  const style: preact.CSSProperties = {
-    width: "100%",
-    fontSize: "0.875rem",
-    height: "fit-content",
-    paddingTop: "0.25rem",
-    paddingBottom: "0.25rem",
-    paddingLeft: "0.5rem",
-    paddingRight: "0.75rem",
-    borderRadius: "0.5rem",
-    display: "flex",
-    whiteSpace: "nowrap",
-    alignItems: "center",
-    justifyContent: "flex-start",
-    cursor: selected ? "default" : "pointer",
-    backgroundColor: selected ? "var(--item-hover-bg-color)" : "transparent",
-    ...(selected ? { pointerEvents: "none" } : {}),
-    // eslint-disable-next-line @typescript-eslint/no-misused-spread
-    ...additionalStyle,
-  };
-  return selected ?
-      <button className="unset-button" style={style} disabled>
-        {children}
-      </button>
-    : <button type="button" className="unset-button" style={style} onClick={onClick}>
-        {children}
-      </button>;
 };
 
 export default SettingsPanel;

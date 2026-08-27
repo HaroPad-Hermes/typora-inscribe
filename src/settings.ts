@@ -1,15 +1,35 @@
 import { mapValues } from "radash";
 import { kebabCase } from "string-ts";
 
+export type ArbiterMode = "auto" | "local" | "api" | "off";
+
 export type Settings = typeof defaultSettings;
+
 const defaultSettings = {
   /* General */
   disableCompletions: false,
   useInlineCompletionTextInSource: true,
-  useInlineCompletionTextInPreviewCodeBlocks: false,
 
-  /* Node.js runtime */
-  nodePath: null as string | null,
+  /* OpenAI-compatible provider */
+  baseUrl: "https://api.deepseek.com/v1",
+  apiKey: "",
+  model: "deepseek-v4-flash",
+  temperature: 0.5,
+  maxTokens: 40,
+  systemPrompt:
+    "You are an AI autocomplete engine. Output only the continuation text. No explanations, no meta-text. Never repeat words already in the text. If you cannot continue meaningfully, output nothing. Continue ONLY the very last word or sentence at the end of the text. Never complete or re-emit earlier sentences, list items, or text that already exists above. Write in Markdown, matching the surrounding structure — always start a new line after a heading (## ...) before body text.",
+
+  /* Completion behavior */
+  // Limit the ghost to at most this many sentences (0 = no limit)
+  outputLimitSentences: 1,
+  // Re-run FIM continuations that end in a stranded unit through chat
+  fimShortFillFallback: true,
+
+  /* Spacing arbiter (fine-tuned Qwen3.5-2B on llama-server, --reasoning off) */
+  arbiterMode: "auto" as ArbiterMode, // auto = local first, API fallback
+  arbiterBaseUrl: "http://127.0.0.1:8099",
+  arbiterModel: "qwen35-2b-arbiter-v4",
+  arbiterTimeoutMs: 10000,
 };
 
 export const settings = (() => {

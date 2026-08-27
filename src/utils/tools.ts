@@ -1,5 +1,35 @@
-import type { EOL, Range } from "@/types/lsp";
-import type { ReadonlyRecord } from "@/types/tools";
+// Local stand-ins for the (removed) Copilot LSP types.
+export interface LspPosition {
+  line: number;
+  character: number;
+}
+export interface LspRange {
+  start: LspPosition;
+  end: LspPosition;
+}
+export type EOL = "\n" | "\r\n";
+export type ReadonlyRecord<K extends PropertyKey, V> = Readonly<Record<K, V>>;
+export type integer = number;
+export type Merge<F, S> = Omit<F, keyof S> & S;
+export type _Id<T> = T extends infer U ? { [K in keyof U]: U[K] } : never;
+
+/** JSON-RPC error code names (used by the logger). */
+export const getErrorCodeName = (code: integer): string | null => {
+  const names: Record<number, string> = {
+    [-32700]: "ParseError",
+    [-32600]: "InvalidRequest",
+    [-32601]: "MethodNotFound",
+    [-32602]: "InvalidParams",
+    [-32603]: "InternalError",
+    [-32000]: "ServerNotInitialized",
+    [-32001]: "UnknownErrorCode",
+    [-32002]: "RequestFailed",
+    [-32003]: "ServerCancelled",
+    [-32004]: "ContentModified",
+    [-32099]: "RequestCancelled",
+  };
+  return names[code] ?? null;
+};
 
 /**
  * Assert that the value is never (i.e., this statement should never be reached).
@@ -100,7 +130,7 @@ export const setGlobalVar = <K extends keyof typeof globalThis | (string & NonNu
  */
 export const replaceTextByRange = (
   text: string,
-  range: Range,
+  range: LspRange,
   newText: string,
   eol: EOL = "\n",
 ) => {

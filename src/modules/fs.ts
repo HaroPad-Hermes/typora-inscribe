@@ -3,9 +3,18 @@ import type fs from "node:fs";
 import { unique } from "radash";
 
 import { PlatformError } from "@/errors";
-import { getEnv, runCommand } from "@/utils/cli-tools";
 
 import * as path from "./path";
+
+// Minimal stand-ins for the removed @/utils/cli-tools module.
+// The original shell-outs (Node runtime detection, Copilot CLI) are gone;
+// Windows never reaches them (PlatformError branches above), so these exist
+// only to keep the type surface intact.
+const getEnv = async (): Promise<Record<string, string | undefined>> =>
+  (window.process?.env as Record<string, string | undefined>) ?? {};
+const runCommand = async (command: string): Promise<string> => {
+  throw new Error(`runCommand unavailable in the Inscribe build: ${command}`);
+};
 
 export const constants = {
   // File Access Constants

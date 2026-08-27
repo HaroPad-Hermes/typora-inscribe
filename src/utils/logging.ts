@@ -1,8 +1,5 @@
-import type { integer } from "@/types/lsp";
-import type { Merge, _Id } from "@/types/tools";
-
-import { getErrorCodeName } from "./lsp";
-import { omit } from "./tools";
+import type { integer, Merge, _Id } from "./tools";
+import { getErrorCodeName, omit } from "./tools";
 
 /**
  * Options for block logger.

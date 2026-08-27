@@ -1,33 +1,32 @@
 {
-  "name": "typora-copilot",
-  "version": "0.3.12",
+  "name": "typora-inscribe",
+  "version": "0.1.0",
   "private": true,
-  "description": "GitHub Copilot plugin for Typora",
+  "description": "Inscribe — AI inline autocomplete and document-agent chat for Typora (DeepSeek / OpenAI-compatible). Fork of typora-copilot.",
   "keywords": [
     "Typora",
-    "Copilot",
-    "GitHub Copilot",
+    "Inscribe",
     "AI",
-    "code completion",
-    "code suggestion",
-    "code generation"
+    "autocomplete",
+    "FIM",
+    "markdown"
   ],
-  "homepage": "https://github.com/Snowflyt/typora-copilot",
+  "homepage": "https://github.com/HaroPad-Hermes/typora-inscribe",
   "bugs": {
-    "url": "https://github.com/Snowflyt/typora-copilot/issues"
+    "url": "https://github.com/HaroPad-Hermes/typora-inscribe/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Snowflyt/typora-copilot"
+    "url": "https://github.com/HaroPad-Hermes/typora-inscribe"
   },
   "license": "MIT",
-  "author": "Snowflyt <gaoge011022@163.com>",
+  "author": "HaroPad <HaroPad@users.noreply.github.com>",
   "type": "module",
   "main": "./index.js",
   "scripts": {
-    "build:dev": "rimraf dist && rollup --config rollup.config.ts --configPlugin @rollup/plugin-typescript && node -e \"import fs from 'node:fs'; import { join } from 'node:path'; ['package.json', 'README.md', 'README.zh-CN.md'].forEach((path) => fs.copyFileSync(path, join('dist', path))); ['bin', 'docs'].forEach((dir) => fs.cpSync(dir, join('dist', dir), { recursive: true })); fs.cpSync(join('node_modules', '@github', 'copilot-language-server', 'dist'), join('dist', 'language-server'), { recursive: true }); fs.rmSync(join('dist', 'language-server', 'api'), { recursive: true }); fs.rmSync(join('dist', 'language-server', 'language-server.js')); fs.readdirSync(join('dist', 'language-server')).forEach((file) => file.endsWith('.map') && fs.rmSync(join('dist', 'language-server', file))); fs.renameSync(join('dist', 'language-server', 'main.js'), join('dist', 'language-server', 'language-server.cjs'))\"",
-    "build:release": "rimraf dist && npm run test-types && npm test && rollup --config rollup.config.ts --configPlugin @rollup/plugin-typescript && prettier --log-level=silent --print-width 80 --write dist/**/* --ignore-path !dist/ && node -e \"import fs from 'node:fs'; import { join } from 'node:path'; ['package.json', 'README.md', 'README.zh-CN.md'].forEach((path) => fs.copyFileSync(path, join('dist', path))); ['bin', 'docs'].forEach((dir) => fs.cpSync(dir, join('dist', dir), { recursive: true })); fs.cpSync(join('node_modules', '@github', 'copilot-language-server', 'dist'), join('dist', 'language-server'), { recursive: true }); fs.rmSync(join('dist', 'language-server', 'api'), { recursive: true }); fs.rmSync(join('dist', 'language-server', 'language-server.js')); fs.readdirSync(join('dist', 'language-server')).forEach((file) => file.endsWith('.map') && fs.rmSync(join('dist', 'language-server', file))); fs.renameSync(join('dist', 'language-server', 'main.js'), join('dist', 'language-server', 'language-server.cjs'))\"",
-    "build:watch": "rimraf dist && node -e \"import fs from 'node:fs'; import { join } from 'node:path'; if (!fs.existsSync('dist')) fs.mkdirSync('dist'); ['package.json', 'README.md', 'README.zh-CN.md'].forEach((path) => fs.copyFileSync(path, join('dist', path))); ['bin', 'docs'].forEach((dir) => fs.cpSync(dir, join('dist', dir), { recursive: true })); fs.cpSync(join('node_modules', '@github', 'copilot-language-server', 'dist'), join('dist', 'language-server'), { recursive: true }); fs.rmSync(join('dist', 'language-server', 'api'), { recursive: true }); fs.readdirSync(join('dist', 'language-server')).forEach((file) => file.endsWith('.map') && fs.rmSync(join('dist', 'language-server', file))); fs.renameSync(join('dist', 'language-server', 'main.js'), join('dist', 'language-server', 'language-server.cjs'))\" && rollup --config rollup.config.ts --configPlugin @rollup/plugin-typescript --watch",
+    "build:dev": "rimraf dist && rollup --config rollup.config.ts --configPlugin @rollup/plugin-typescript && node -e \"import fs from 'node:fs'; import { join } from 'node:path'; ['package.json', 'README.md'].forEach((path) => fs.copyFileSync(path, join('dist', path))); ['bin', 'docs'].forEach((dir) => fs.cpSync(dir, join('dist', dir), { recursive: true }));\"",
+    "build:release": "rimraf dist && npm run test-types && npm test && rollup --config rollup.config.ts --configPlugin @rollup/plugin-typescript && prettier --log-level=silent --print-width 80 --write dist/**/* --ignore-path !dist/ && node -e \"import fs from 'node:fs'; import { join } from 'node:path'; ['package.json', 'README.md'].forEach((path) => fs.copyFileSync(path, join('dist', path))); ['bin', 'docs'].forEach((dir) => fs.cpSync(dir, join('dist', dir), { recursive: true }));\"",
+    "build:watch": "rimraf dist && node -e \"import fs from 'node:fs'; import { join } from 'node:path'; if (!fs.existsSync('dist')) fs.mkdirSync('dist'); ['package.json', 'README.md'].forEach((path) => fs.copyFileSync(path, join('dist', path))); ['bin', 'docs'].forEach((dir) => fs.cpSync(dir, join('dist', dir), { recursive: true }));\" && rollup --config rollup.config.ts --configPlugin @rollup/plugin-typescript --watch",
     "format": "prettier --no-error-on-unmatched-pattern --write {src,test}/**/*.{json,js,jsx,ts,tsx} *.{js,cjs,mjs,ts,cts,mts,json,md}",
     "lint": "eslint {src,test}/**/*.{js,jsx,ts,tsx} *.{js,cjs,mjs,ts,cts,mts} --no-error-on-unmatched-pattern --report-unused-disable-directives-severity error --max-warnings 0 && stylelint \"src/**/*.{css,scss}\"",
     "lint:fix": "eslint --fix {src,test}/**/*.{js,jsx,ts,tsx} *.{js,cjs,mjs,ts,cts,mts} --no-error-on-unmatched-pattern --report-unused-disable-directives-severity error --max-warnings 0 && stylelint --fix \"src/**/*.{css,scss}\"",
@@ -41,7 +40,6 @@
     "typecheck": "tsc --noEmit -p tsconfig.build.json"
   },
   "dependencies": {
-    "@github/copilot-language-server": "^1.409.0",
     "@preact/signals": "^2.5.1",
     "color2k": "^2.0.3",
     "fast-diff": "^1.3.0",

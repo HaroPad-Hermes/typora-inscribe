@@ -1,6 +1,7 @@
-import type { CopilotStatus } from "@/client";
-
 import Spinner from "./Spinner";
+
+/** Icon status — the Copilot client status enum replaced by a local alias. */
+export type CopilotStatus = "Normal" | "Warning" | "InProgress" | "Disabled";
 
 export interface CopilotIconProps {
   status: CopilotStatus | "Disabled";

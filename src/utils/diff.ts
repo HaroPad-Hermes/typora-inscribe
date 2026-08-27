@@ -1,6 +1,6 @@
 import diff from "fast-diff";
 
-import type { Range } from "@/types/lsp";
+import type { LspRange as Range } from "./tools";
 
 export const computeTextChanges = (
   oldStr: string,

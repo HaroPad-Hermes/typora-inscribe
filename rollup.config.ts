@@ -99,12 +99,4 @@ export default defineConfig([
       }),
     ],
   },
-  {
-    input: "src/mac-server.ts",
-    output: {
-      file: "dist/mac-server.cjs",
-      format: "cjs",
-    },
-    plugins,
-  },
 ]);
