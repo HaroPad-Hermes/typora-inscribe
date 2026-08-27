@@ -606,18 +606,76 @@ Promise.defer(async () => {
   };
 
   /* The actual completion request — shared by auto-trigger and hotkey. */
+  /* Show ~15 chars before/after a position for diag verification. */
+  const ctxAround = (md: string, p: Position): string => {
+    const eol = Files.useCRLF ? "\r\n" : "\n";
+    const lines = md.split(eol);
+    let off = 0;
+    for (let i = 0; i < p.line && i < lines.length; i++) off += (lines[i]?.length ?? 0) + eol.length;
+    off += p.character;
+    return md.slice(Math.max(0, off - 15), off) + "␂" + md.slice(off, off + 15);
+  };
+
+  /* Derive the caret directly from the live DOM selection at trigger time.
+   * Counts text nodes under #write (md-meta spans included — they hold the
+   * raw markdown chars; CodeMirror islands excluded), then maps the global
+   * offset to {line, character} against the current markdown. Returns null
+   * when the selection isn't a collapsed caret in the editor. */
+  const deriveCaretFromDomSelection = (markdown: string): Position | null => {
+    try {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) return null;
+      const anchor = sel.anchorNode;
+      if (!anchor || !editor.writingArea.contains(anchor)) return null;
+      const elem = anchor.nodeType === Node.TEXT_NODE ? anchor.parentElement : (anchor as Element);
+      if (!elem || elem.closest(".CodeMirror") || elem.closest("input") || elem.classList?.contains("ty-input"))
+        return null;
+
+      const walker = document.createTreeWalker(editor.writingArea, NodeFilter.SHOW_TEXT, {
+        acceptNode: (n) =>
+          n.parentElement?.closest(".CodeMirror") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+      });
+      let offset = -1;
+      let acc = 0;
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        if (n === anchor) {
+          offset = acc + sel.anchorOffset;
+          break;
+        }
+        acc += n.textContent?.length ?? 0;
+      }
+      if (offset < 0) return null;
+
+      const norm = markdown.replace(/\r\n/g, "\n");
+      if (offset > norm.length) offset = norm.length;
+      const before = norm.slice(0, offset);
+      const line = before.split("\n").length - 1;
+      const character = offset - (before.lastIndexOf("\n") + 1);
+      return { line, character };
+    } catch (e) {
+      diagLog(`deriveCaret EXCEPTION: ${String(e)}`);
+      return null;
+    }
+  };
+
   const doTrigger = (manual = false): void => {
+    if (settings.disableCompletions) return;
     if (!settings.apiKey) {
       diagLog("trigger: NO API KEY — returning");
       if (manual) flashNoSuggestion();
       return;
     }
 
-    /* If caret position is available, fetch completion */
-    if (state.caretPosition) {
-      const caretPosition = state.caretPosition;
+    /* Prefer a freshly derived caret (ground truth at trigger time); the
+     * change-event tracker is unreliable on Typora 1.14.9. */
+    const derived = deriveCaretFromDomSelection(state.markdown);
+    const caretPosition = derived ?? state.caretPosition;
+    diagLog(
+      `trigger${manual ? " (manual)" : ""} caret=${JSON.stringify(caretPosition)} source=${derived ? "dom" : "tracked"}` +
+        (caretPosition ? ` ctx=${JSON.stringify(ctxAround(state.markdown, caretPosition))}` : ""),
+    );
+    if (caretPosition) {
       logger.debug("Triggering completion at", caretPosition);
-      diagLog(`trigger${manual ? " (manual)" : ""} caret=${JSON.stringify(caretPosition)}`);
       if (manual) showRequestingIndicator();
       void taskManager
         .start(caretPosition, state.markdown, {
@@ -636,7 +694,7 @@ Promise.defer(async () => {
           }
         });
     } else if (manual) {
-      diagLog("manual trigger: no caret position");
+      diagLog("manual trigger: no caret position (derivation failed, tracker null)");
       flashNoSuggestion();
     }
   };
