@@ -6,7 +6,6 @@
 import {
   buildSystemPromptFrom,
   computeGhost,
-  isIncompleteFill,
 } from "./flow";
 import { diagLog } from "../diag";
 import type { ChatMessage, GenerateOnceOptions, Provider } from "../providers/provider";
@@ -88,16 +87,15 @@ export default class CompletionService {
           }
         }
         if (fimTried && fimResult !== null) {
-          // FIM fills are boundary-sized: an empty or stranded-unit fill
-          // ("the", "and") leaves the sentence hanging — re-run via chat.
-          // Skipped inside code blocks, where short fills are legitimate.
-          const inCode = raw !== undefined && raw.includes("```");
-          if (this.settings.fimShortFillFallback && !inCode && isIncompleteFill(fimResult)) {
-            diagLog(`FIM fill incomplete (${JSON.stringify(fimResult.slice(0, 40))}) — chat fallback`);
-            fimResult = null;
-          } else {
-            return fimResult;
-          }
+          // Raw FIM fills are boundary-sized: they routinely end mid-word or
+          // on closed-class words ("ence with some ", " dog. This is a ") even
+          // when they are exactly the right continuation. The old
+          // isIncompleteFill veto + chat fallback produced a NULL result for
+          // 8/8 measured fills (live API matrix) because the chat path returns
+          // empty for mid-word prompts — i.e. it vetoed GOOD completions.
+          // Show the FIM fill as-is; the only vetoes are empty / stuck-marker,
+          // applied in computeGhost's clean() step.
+          return fimResult;
         }
         const chatResult = await generate(
           [
