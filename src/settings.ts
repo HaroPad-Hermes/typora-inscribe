@@ -24,12 +24,9 @@ const defaultSettings = {
   outputLimitSentences: 1,
   // Re-run FIM continuations that end in a stranded unit through chat
   fimShortFillFallback: true,
-
-  /* Spacing arbiter (fine-tuned Qwen3.5-2B on llama-server, --reasoning off) */
-  arbiterMode: "auto" as ArbiterMode, // auto = local first, API fallback
-  arbiterBaseUrl: "http://127.0.0.1:8099",
-  arbiterModel: "qwen35-2b-arbiter-v4",
-  arbiterTimeoutMs: 10000,
+  // Manual trigger hotkey, e.g. "ctrl+space" — when set, auto-trigger is
+  // disabled and this key fires a completion request on demand.
+  triggerHotkey: "",
 };
 
 export const settings = (() => {

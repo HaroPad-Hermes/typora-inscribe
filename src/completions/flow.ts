@@ -120,9 +120,6 @@ export interface GhostCallbacks {
   /** Called with the continuation prompt plus the raw windowed prefix.
    *  Returns the raw continuation text, or null if aborted/cursor moved. */
   continueText: (prompt: string, raw?: string) => Promise<string | null>;
-  /** Spacing arbiter: is `candidate` (typed last word + continuation's first
-   *  token) a plausible continuation of `text`? */
-  isPlausibleWord: (text: string, candidate: string) => Promise<boolean | null>;
 }
 
 export interface GhostOptions {
@@ -157,22 +154,18 @@ export async function computeGhost(
     return result;
   }
 
-  // Case 2: no trailing space — continuation completes the word or starts
-  // a new one. The plausible-word check decides.
+  // Case 2: no trailing space — the continuation either completes the last
+  // word (attaches, no space) or starts a new word (leading space).
+  // The FIM endpoint decides the boundary: leading whitespace in its raw
+  // output means the typed word is finished and a new one follows.
   const windowed = continuationWindow(text);
-  const sentence = await cb.continueText(`Continue writing. ${windowed} `, windowed);
+  const sentence = await cb.continueText(`Continue writing. ${windowed}`, windowed);
   if (sentence === null) return null;
 
   const cleaned = clean(sentence);
   if (!cleaned || isStuckMarker(cleaned)) return null;
 
-  const lastWord = text.split(/\s/).pop() || text;
-  const firstToken = cleaned.split(/\s/)[0] ?? "";
-  if (!firstToken) return cleaned;
-
-  const plausible = await cb.isPlausibleWord(text, lastWord + firstToken);
-  if (plausible === null) {
-    return /^[A-ZÅÄÖ0-9]/.test(cleaned) ? " " + cleaned : cleaned;
-  }
-  return plausible ? cleaned : " " + cleaned;
+  // Code-decided spacing: exactly one leading space when the model signaled
+  // a word boundary, none when it completed the current word.
+  return /^\s/.test(sentence) ? " " + cleaned : cleaned;
 }

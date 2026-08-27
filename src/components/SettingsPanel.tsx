@@ -3,7 +3,6 @@ import { useState } from "preact/hooks";
 import { settings } from "@/settings";
 import { t } from "@/i18n";
 
-import DropdownWithInput from "./DropdownWithInput";
 import ModalBody from "./ModalBody";
 import ModalCloseButton from "./ModalCloseButton";
 import ModalContent from "./ModalContent";
@@ -15,8 +14,6 @@ export interface SettingsPanelProps {
   onClose: () => void;
 }
 
-const ARBITER_MODES = ["auto", "local", "api", "off"];
-
 const SettingsPanel: FC<SettingsPanelProps> = ({ onClose }) => {
   const [baseUrl, setBaseUrl] = useState(settings.baseUrl);
   const [apiKey, setApiKey] = useState(settings.apiKey);
@@ -27,8 +24,7 @@ const SettingsPanel: FC<SettingsPanelProps> = ({ onClose }) => {
     String(settings.outputLimitSentences),
   );
   const [fimShortFillFallback, setFimShortFillFallback] = useState(settings.fimShortFillFallback);
-  const [arbiterMode, setArbiterMode] = useState(settings.arbiterMode);
-  const [arbiterBaseUrl, setArbiterBaseUrl] = useState(settings.arbiterBaseUrl);
+  const [triggerHotkey, setTriggerHotkey] = useState(settings.triggerHotkey);
   const [useInlineInSource, setUseInlineInSource] = useState(
     settings.useInlineCompletionTextInSource,
   );
@@ -44,10 +40,7 @@ const SettingsPanel: FC<SettingsPanelProps> = ({ onClose }) => {
     const ols = parseInt(outputLimitSentences, 10);
     settings.outputLimitSentences = Number.isFinite(ols) ? Math.max(ols, 0) : 1;
     settings.fimShortFillFallback = fimShortFillFallback;
-    settings.arbiterMode = ARBITER_MODES.includes(arbiterMode)
-      ? (arbiterMode as typeof settings.arbiterMode)
-      : "auto";
-    settings.arbiterBaseUrl = arbiterBaseUrl.trim() || "http://127.0.0.1:8099";
+    settings.triggerHotkey = triggerHotkey.trim().toLowerCase();
     settings.useInlineCompletionTextInSource = useInlineInSource;
     onClose();
   };
@@ -128,17 +121,8 @@ const SettingsPanel: FC<SettingsPanelProps> = ({ onClose }) => {
             </div>
 
             <div style={fieldStyle}>
-              <label style={labelStyle}>{t("settings.arbiter-mode")}</label>
-              <DropdownWithInput
-                options={ARBITER_MODES}
-                value={arbiterMode}
-                onChange={(v) => setArbiterMode(v as typeof arbiterMode)}
-              />
-            </div>
-
-            <div style={fieldStyle}>
-              <label style={labelStyle}>{t("settings.arbiter-url")}</label>
-              <input style={inputStyle} value={arbiterBaseUrl} onInput={(e) => setArbiterBaseUrl((e.target as HTMLInputElement).value)} placeholder="http://127.0.0.1:8099" />
+              <label style={labelStyle}>{t("settings.trigger-hotkey")}</label>
+              <input style={inputStyle} value={triggerHotkey} onInput={(e) => setTriggerHotkey((e.target as HTMLInputElement).value)} placeholder="ctrl+space (empty = auto-trigger)" />
             </div>
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem", marginTop: "1rem" }}>

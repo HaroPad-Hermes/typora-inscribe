@@ -7,8 +7,8 @@ import {
   buildSystemPromptFrom,
   computeGhost,
   isIncompleteFill,
-  WORD_VALIDITY_SYSTEM,
 } from "./flow";
+import { diagLog } from "../diag";
 import type { ChatMessage, GenerateOnceOptions, Provider } from "../providers/provider";
 import { type Settings } from "../settings";
 export interface CompletionResult {
@@ -31,43 +31,6 @@ export default class CompletionService {
     private provider: Provider,
     private settings: Settings = settings,
   ) {}
-
-  /** Local spacing arbiter: OpenAI-compatible call to the fine-tuned model
-   *  (llama-server --reasoning off). Returns "YES"/"NO", or null on any
-   *  failure so the caller can fall back. */
-  private async localPlausibleWord(system: string, user: string): Promise<string | null> {
-    const { arbiterBaseUrl, arbiterModel, arbiterTimeoutMs } = this.settings;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), arbiterTimeoutMs);
-    try {
-      const res = await fetch(`${arbiterBaseUrl}/v1/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: arbiterModel,
-          messages: [
-            { role: "system", content: system },
-            { role: "user", content: user },
-          ],
-          max_tokens: 128,
-          temperature: 0,
-          stream: false,
-        }),
-        signal: controller.signal,
-      });
-      if (!res.ok) return null;
-      const d = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-      const content: string | undefined = d?.choices?.[0]?.message?.content;
-      if (!content) return null;
-      const t = content.trim().toUpperCase();
-      return t.startsWith("YES") ? "YES" : t.startsWith("NO") ? "NO" : null;
-    } catch (error) {
-      console.error("Inscribe: local arbiter failed", error);
-      return null;
-    } finally {
-      clearTimeout(timer);
-    }
-  }
 
   /** Abort the current generation (called when the caret moves or a new
    *  request supersedes this one). */
@@ -99,26 +62,29 @@ export default class CompletionService {
       try {
         return await this.provider.generateOnce(messages, { model, ...o });
       } catch (error) {
-        console.error("Inscribe: completion request failed", error);
+        diagLog(`chat completion failed: ${String(error)}`);
         return null;
       }
     };
 
-    // FIM suffix anchor: text after the cursor, capped
+    // FIM suffix anchor: text after the cursor, capped. May be empty — FIM
+    // with an empty suffix is plain prefix completion, which is what we want
+    // at end-of-line. The model's leading whitespace marks the word boundary.
     const suffixText = postCursorText.slice(0, 4000);
 
     const ghost = await computeGhost(preCursorText, systemPrompt, {
       continueText: async (p, raw) => {
-        // FIM path: when there IS text after the cursor, the raw prefix +
-        // suffix anchor the position structurally.
+        // FIM path: preferred ALWAYS (empty suffix included). It completes
+        // mid-word reliably and signals the boundary via leading whitespace.
         let fimResult: string | null = null;
         let fimTried = false;
-        if (raw !== undefined && suffixText && this.provider.generateFimOnce) {
+        if (raw !== undefined && this.provider.generateFimOnce) {
           fimTried = true;
           try {
             fimResult = await this.provider.generateFimOnce(raw, suffixText, opts);
+            diagLog(`FIM result: ${JSON.stringify((fimResult ?? "").slice(0, 80))} (suffix ${suffixText.length} chars)`);
           } catch (error) {
-            console.error("Inscribe: FIM completion failed — falling back to chat path", error);
+            diagLog(`FIM completion failed — falling back to chat path: ${String(error)}`);
           }
         }
         if (fimTried && fimResult !== null) {
@@ -127,38 +93,21 @@ export default class CompletionService {
           // Skipped inside code blocks, where short fills are legitimate.
           const inCode = raw !== undefined && raw.includes("```");
           if (this.settings.fimShortFillFallback && !inCode && isIncompleteFill(fimResult)) {
-            console.log("Inscribe: FIM fill incomplete — falling back to chat path");
+            diagLog(`FIM fill incomplete (${JSON.stringify(fimResult.slice(0, 40))}) — chat fallback`);
             fimResult = null;
           } else {
             return fimResult;
           }
         }
-        return generate(
+        const chatResult = await generate(
           [
             { role: "system", content: systemPrompt },
             { role: "user", content: p },
           ],
           { maxTokens: opts.maxTokens, temperature: opts.temperature },
         );
-      },
-      isPlausibleWord: async (text, candidate) => {
-        const user = `Text: "${text}"\nIs "${candidate}" a plausible word to write here?`;
-        const mode = this.settings.arbiterMode;
-        if (mode !== "api" && mode !== "off") {
-          const local = await this.localPlausibleWord(WORD_VALIDITY_SYSTEM, user);
-          if (local !== null) return local === "YES";
-          if (mode === "local") return null;
-        }
-        if (mode === "off") return null; // let computeGhost use its heuristic
-        const r = await generate(
-          [
-            { role: "system", content: WORD_VALIDITY_SYSTEM },
-            { role: "user", content: user },
-          ],
-          { maxTokens: 5, temperature: 0.1 },
-        );
-        if (r === null) return null;
-        return r.trim().toUpperCase().startsWith("YES");
+        diagLog(`chat fallback result: ${JSON.stringify((chatResult ?? "").slice(0, 80))}`);
+        return chatResult;
       },
     }, {
       maxSentences: this.settings.outputLimitSentences > 0

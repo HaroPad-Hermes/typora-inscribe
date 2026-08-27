@@ -6,6 +6,7 @@ import { attachChatToggle } from "./chat-toggle";
 import CompletionService from "./completions/service";
 import { attachSuggestionPanel } from "./components/SuggestionPanel";
 import { VERSION } from "./constants";
+import { diagLog } from "./diag";
 import { logger } from "./logging";
 import { OpenAICompatibleProvider } from "./providers/openai-compat";
 import { settings } from "./settings";
@@ -19,6 +20,13 @@ import type { LspPosition as Position } from "./utils/tools";
 import "./styles.scss";
 
 logger.info("Inscribe plugin activated. Version:", VERSION);
+
+window.addEventListener("error", (e) => {
+  diagLog(`[window.error] ${e.message} @ ${e.filename}:${e.lineno}`);
+});
+window.addEventListener("unhandledrejection", (e) => {
+  diagLog(`[unhandledrejection] ${String((e as PromiseRejectionEvent).reason)}`);
+});
 
 /** A completion produced by the FIM service, positioned in the document. */
 interface Completion {
@@ -84,18 +92,25 @@ class CompletionTaskManager {
     }: {
       onCompletion?: (completion: Completion) => Observable<"accepted" | "rejected"> | void;
     },
-  ): Promise<void> {
+  ): Promise<boolean> {
     this.rejectCurrentIfExist();
     this._state = "requesting";
     const myId = this.generationId;
 
     const { preCursorText, postCursorText } = splitAtPosition(markdown, position);
+    diagLog(
+      `start caret=${JSON.stringify(position)} preLen=${preCursorText.length} postLen=${postCursorText.length}`,
+    );
     const result = await this.service.generateCompletion({ preCursorText, postCursorText });
 
-    if (this.generationId !== myId) return; // rejected or superseded meanwhile
+    if (this.generationId !== myId) {
+      diagLog("request superseded (rejected / caret moved)");
+      return false; // rejected or superseded meanwhile
+    }
     if (result === null) {
+      diagLog("completion result NULL (nothing to show)");
       this._state = "idle";
-      return;
+      return false;
     }
 
     this._state = "pending";
@@ -108,11 +123,13 @@ class CompletionTaskManager {
     };
 
     const cleanup = onCompletion?.(completion) ?? new Observable<"accepted" | "rejected">();
+    diagLog(`completion ready text=${JSON.stringify(completion.text.slice(0, 80))}`);
     cleanup.subscribeOnce(() => {
       this._state = "idle";
       if (this.activeCleanup === cleanup) this.activeCleanup = null;
     });
     this.activeCleanup = cleanup;
+    return true;
   }
 }
 
@@ -250,39 +267,46 @@ Promise.defer(async () => {
     });
 
     const insertCompletionText = () => {
-      // Check whether it is safe to just use `insertText` to insert completion text,
-      // as using `reloadContent` uses much more resources and causes a flicker
-      const newMarkdown = replaceTextByRange(
-        state.markdown,
-        range,
-        completion.text,
-        Files.useCRLF ? "\r\n" : "\n",
-      );
-      const diffs = diff(state.markdown, newMarkdown).filter((part) => part[0] !== diff.EQUAL);
-
-      if (diffs.length === 1 && diffs[0]![0] === diff.INSERT) {
-        editor.insertText(diffs[0]![1]);
-      } else {
-        // @ts-expect-error - CodeMirror supports 2nd parameter, but not declared in types
-        cm.setValue(editor.getMarkdown(), "begin");
-        cm.setCursor({ line: position.line, ch: position.character });
-        cm.replaceRange(
-          text,
-          { line: range.start.line, ch: range.start.character },
-          { line: range.end.line, ch: range.end.character },
+      try {
+        // Check whether it is safe to just use `insertText` to insert completion text,
+        // as using `reloadContent` uses much more resources and causes a flicker
+        const newMarkdown = replaceTextByRange(
+          state.markdown,
+          range,
+          completion.text,
+          Files.useCRLF ? "\r\n" : "\n",
         );
-        const newMarkdown = cm.getValue(Files.useCRLF ? "\r\n" : "\n");
-        const cursorPos = Object.assign(cm.getCursor(), {
-          lineText: cm.getLine(cm.getCursor().line),
-        });
-        Files.reloadContent(newMarkdown, {
-          fromDiskChange: false,
-          skipChangeCount: true,
-          skipStore: false,
-        });
-        // Restore text cursor position
-        sourceView.gotoLine(cursorPos);
-        editor.refocus();
+        const diffs = diff(state.markdown, newMarkdown).filter((part) => part[0] !== diff.EQUAL);
+
+        if (diffs.length === 1 && diffs[0]![0] === diff.INSERT) {
+          diagLog(`insert via editor.insertText: ${JSON.stringify(completion.text.slice(0, 60))}`);
+          editor.insertText(diffs[0]![1]);
+        } else {
+          diagLog(`insert via cm.replaceRange + reloadContent (diffs=${diffs.length})`);
+          // @ts-expect-error - CodeMirror supports 2nd parameter, but not declared in types
+          cm.setValue(editor.getMarkdown(), "begin");
+          cm.setCursor({ line: position.line, ch: position.character });
+          cm.replaceRange(
+            text,
+            { line: range.start.line, ch: range.start.character },
+            { line: range.end.line, ch: range.end.character },
+          );
+          const newMarkdown = cm.getValue(Files.useCRLF ? "\r\n" : "\n");
+          const cursorPos = Object.assign(cm.getCursor(), {
+            lineText: cm.getLine(cm.getCursor().line),
+          });
+          Files.reloadContent(newMarkdown, {
+            fromDiskChange: false,
+            skipChangeCount: true,
+            skipStore: false,
+          });
+          // Restore text cursor position
+          sourceView.gotoLine(cursorPos);
+          editor.refocus();
+        }
+      } catch (e) {
+        diagLog(`insert EXCEPTION: ${String(e)}`);
+        throw e;
       }
     };
 
@@ -548,30 +572,114 @@ Promise.defer(async () => {
   };
 
   /*******************
-   * Change handlers *
+   * Trigger logic    *
    *******************/
 
-  /**
-   * Trigger completion.
-   */
-  const triggerCompletion = debounce({ delay: 500 }, () => {
-    if (!settings.apiKey) return;
+  /* "✦ …" indicator shown while a manual request is in flight, so the user
+   * knows the keypress was registered even before the ghost appears. */
+  let requestingIndicator: HTMLDivElement | null = null;
+  let requestingTimer: ReturnType<typeof setTimeout> | null = null;
+  const hideRequestingIndicator = () => {
+    requestingIndicator?.remove();
+    requestingIndicator = null;
+    if (requestingTimer) {
+      clearTimeout(requestingTimer);
+      requestingTimer = null;
+    }
+  };
+  const showRequestingIndicator = (): void => {
+    hideRequestingIndicator();
+    const pos = getCaretCoordinate();
+    if (!pos) return;
+    const el = document.createElement("div");
+    el.textContent = "✦ …";
+    el.style.cssText =
+      "position:fixed;z-index:99999;font-size:12px;color:#888;pointer-events:none;font-family:inherit;" +
+      `left:${pos.x}px;top:${pos.y + 24}px;`;
+    document.body.appendChild(el);
+    requestingIndicator = el;
+  };
+  /** Flash "no suggestion" feedback when a manual request found nothing. */
+  const flashNoSuggestion = (): void => {
+    if (requestingIndicator) requestingIndicator.textContent = "✦ no suggestion";
+    requestingTimer = setTimeout(hideRequestingIndicator, 900);
+  };
+
+  /* The actual completion request — shared by auto-trigger and hotkey. */
+  const doTrigger = (manual = false): void => {
+    if (!settings.apiKey) {
+      diagLog("trigger: NO API KEY — returning");
+      if (manual) flashNoSuggestion();
+      return;
+    }
 
     /* If caret position is available, fetch completion */
     if (state.caretPosition) {
       const caretPosition = state.caretPosition;
       logger.debug("Triggering completion at", caretPosition);
-      void taskManager.start(caretPosition, state.markdown, {
-        onCompletion: (completion) => {
-          if (editor.sourceView.inSourceMode)
-            if (settings.useInlineCompletionTextInSource)
-              return insertCompletionTextToCodeMirror(cm, completion);
-            else return insertSuggestionPanelToCodeMirror(cm, completion);
-          else return insertCompletionTextToEditor(caretPosition, completion);
-        },
-      });
+      diagLog(`trigger${manual ? " (manual)" : ""} caret=${JSON.stringify(caretPosition)}`);
+      if (manual) showRequestingIndicator();
+      void taskManager
+        .start(caretPosition, state.markdown, {
+          onCompletion: (completion) => {
+            if (editor.sourceView.inSourceMode)
+              if (settings.useInlineCompletionTextInSource)
+                return insertCompletionTextToCodeMirror(cm, completion);
+              else return insertSuggestionPanelToCodeMirror(cm, completion);
+            else return insertCompletionTextToEditor(caretPosition, completion);
+          },
+        })
+        .then((shown) => {
+          if (manual) {
+            hideRequestingIndicator();
+            if (!shown) flashNoSuggestion();
+          }
+        });
+    } else if (manual) {
+      diagLog("manual trigger: no caret position");
+      flashNoSuggestion();
     }
+  };
+
+  /* Auto-trigger: debounced on document change. Disabled when a manual
+   * trigger hotkey is configured (Inscribe-style). */
+  const triggerCompletion = debounce({ delay: 500 }, () => {
+    if (settings.triggerHotkey) return; // manual mode: no auto-trigger
+    doTrigger(false);
   });
+
+  /* Manual trigger hotkey, e.g. "ctrl+space" (Inscribe-style). */
+  const parseHotkey = (spec: string): { key: string; mods: Set<string> } | null => {
+    const parts = spec.trim().toLowerCase().split("+").map((p) => p.trim()).filter(Boolean);
+    if (parts.length === 0) return null;
+    const key = parts.pop()!;
+    const mods = new Set(parts);
+    return { key, mods };
+  };
+  const hotkeyHandler = (event: KeyboardEvent): void => {
+    const parsed = parseHotkey(settings.triggerHotkey);
+    if (!parsed) return;
+    // Never steal keys while typing in inputs (chat box, settings, search).
+    const tag = document.activeElement?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+    const key = event.key.toLowerCase();
+    const isKey =
+      key === parsed.key ||
+      (parsed.key === "space" && (key === " " || key === "spacebar"));
+    if (!isKey) return;
+    const mods = parsed.mods;
+    const has = (m: string) =>
+      m === "ctrl" ? event.ctrlKey : m === "shift" ? event.shiftKey : m === "alt" ? event.altKey : m === "meta" ? event.metaKey : false;
+    if (mods.size !== ["ctrl", "shift", "alt", "meta"].filter(has).length) return;
+    for (const m of mods) if (!has(m)) return;
+
+    diagLog(`manual hotkey pressed: ${settings.triggerHotkey}`);
+    event.preventDefault();
+    event.stopPropagation();
+    doTrigger(true);
+  };
+  document.addEventListener("keydown", hotkeyHandler, true);
 
   /*********************
    * Initialize states *

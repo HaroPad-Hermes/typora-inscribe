@@ -199,9 +199,8 @@
     "output-limit": "Max sentences (0 = none)",
     "fim-fallback": "FIM short-fill fallback",
     "inline-source": "Inline ghost in source mode",
-    "arbiter-mode": "Spacing arbiter mode",
-    "arbiter-url": "Arbiter base URL",
     "save": "Save",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "trigger-hotkey": "Trigger hotkey"
   }
 }

@@ -210,9 +210,8 @@
     "output-limit": "最大句数（0 = 不限）",
     "fim-fallback": "FIM 短填充回退",
     "inline-source": "源码模式内联提示",
-    "arbiter-mode": "空格仲裁模式",
-    "arbiter-url": "仲裁器地址",
     "save": "保存",
-    "cancel": "取消"
+    "cancel": "取消",
+    "trigger-hotkey": "手动触发快捷键"
   }
 }
