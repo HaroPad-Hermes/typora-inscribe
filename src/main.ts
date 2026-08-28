@@ -667,12 +667,17 @@ Promise.defer(async () => {
       return;
     }
 
-    /* Prefer a freshly derived caret (ground truth at trigger time); the
-     * change-event tracker is unreliable on Typora 1.14.9. */
+    /* Prefer the change-event tracker: it computes positions in MARKDOWN
+     * space from the edit diff, which is exact. The DOM derivation is a
+     * fallback for when the tracker is null — its text-node offset does not
+     * account for list bullets (`- ` are CSS pseudo-elements, absent from
+     * DOM text) so it lands short in lists. */
+    const tracked = state.caretPosition;
     const derived = deriveCaretFromDomSelection(state.markdown);
-    const caretPosition = derived ?? state.caretPosition;
+    const caretPosition = tracked ?? derived;
     diagLog(
-      `trigger${manual ? " (manual)" : ""} caret=${JSON.stringify(caretPosition)} source=${derived ? "dom" : "tracked"}` +
+      `trigger${manual ? " (manual)" : ""} caret=${JSON.stringify(caretPosition)} source=${tracked ? "tracked" : "dom"} ` +
+        `tracked=${JSON.stringify(tracked)} derived=${JSON.stringify(derived)}` +
         (caretPosition ? ` ctx=${JSON.stringify(ctxAround(state.markdown, caretPosition))}` : ""),
     );
     if (caretPosition) {
@@ -793,10 +798,9 @@ Promise.defer(async () => {
 
     /* When update not suppressed */
     // Update caret position
-    if (
-      editor.selection.getRangy()?.collapsed && // If not selecting text
-      window.getSelection()?.rangeCount // If has cursor
-    ) {
+    const rangyRange = (editor.selection as any)?.getRangy?.();
+    const caretCollapsed = rangyRange ? rangyRange.collapsed === true : undefined;
+    if (caretCollapsed === true && window.getSelection()?.rangeCount) {
       const changes = computeTextChanges(state.markdown, newMarkdown, state.caretPosition);
       if (changes.length === 1) {
         const change = changes[0]!;

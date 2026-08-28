@@ -9,14 +9,22 @@ export const computeTextChanges = (
 ): { range: Range; text: string }[] => {
   const result: { range: Range; text: string }[] = [];
 
+  // Normalize line endings before diffing: a CRLF/LF mismatch would otherwise
+  // produce a multi-hunk diff for a single keystroke (every line "changes"),
+  // which downstream code treats as "caret unknown" — the tracker then nulls
+  // and we fall back to the (less reliable) DOM derivation.
+  const eol = Files.useCRLF ? "\r\n" : "\n";
+  oldStr = oldStr.replace(/\r\n|\r|\n/g, eol);
+  newStr = newStr.replace(/\r\n|\r|\n/g, eol);
+
   const diffs = diff(
     oldStr,
     newStr,
     lastCaretPosition ?
       oldStr
-        .split(Files.useCRLF ? "\r\n" : "\n")
+        .split(eol)
         .slice(0, lastCaretPosition.line)
-        .reduce((acc, line) => acc + line.length + (Files.useCRLF ? 2 : 1), 0) +
+        .reduce((acc, line) => acc + line.length + eol.length, 0) +
         lastCaretPosition.character
     : 0,
     true,
@@ -31,7 +39,7 @@ export const computeTextChanges = (
   while ((part = diffs.pop())) {
     const [operation, text] = part;
 
-    const linesToAdd = text.split(Files.useCRLF ? "\r\n" : "\n").length - 1;
+    const linesToAdd = text.split(eol).length - 1;
 
     switch (operation) {
       case diff.EQUAL:
@@ -43,7 +51,7 @@ export const computeTextChanges = (
         character =
           linesToAdd === 0 ?
             character + text.length
-          : text.length - text.lastIndexOf(Files.useCRLF ? "\r\n" : "\n") - 1;
+          : text.length - text.lastIndexOf(eol) - 1;
         break;
 
       case diff.DELETE:
@@ -56,7 +64,7 @@ export const computeTextChanges = (
                 character:
                   linesToAdd === 0 ?
                     character + text.length
-                  : text.length - text.lastIndexOf(Files.useCRLF ? "\r\n" : "\n") - 1,
+                  : text.length - text.lastIndexOf(eol) - 1,
               },
             },
             text: "",
@@ -66,13 +74,13 @@ export const computeTextChanges = (
           change.range.end.character =
             linesToAdd === 0 ?
               character + text.length
-            : text.length - text.lastIndexOf(Files.useCRLF ? "\r\n" : "\n") - 1;
+            : text.length - text.lastIndexOf(eol) - 1;
         }
         line += linesToAdd;
         character =
           linesToAdd === 0 ?
             character + text.length
-          : text.length - text.lastIndexOf(Files.useCRLF ? "\r\n" : "\n") - 1;
+          : text.length - text.lastIndexOf(eol) - 1;
         break;
 
       case diff.INSERT:
