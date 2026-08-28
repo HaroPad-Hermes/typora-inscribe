@@ -40,7 +40,7 @@ export default class CompletionService {
   /** Generate a completion for the given document state.
    *  Returns null when there is nothing to show (abort, empty, stuck marker). */
   async generateCompletion(req: CompletionRequest): Promise<CompletionResult | null> {
-    const { preCursorText, postCursorText } = req;
+    const { preCursorText } = req;
 
     const model = this.settings.model;
     const systemPrompt = buildSystemPromptFrom(
@@ -66,46 +66,36 @@ export default class CompletionService {
       }
     };
 
-    // FIM suffix anchor: text after the cursor, capped. May be empty — FIM
-    // with an empty suffix is plain prefix completion, which is what we want
-    // at end-of-line. The model's leading whitespace marks the word boundary.
-    const suffixText = postCursorText.slice(0, 4000);
+    // FIM: plain prefix completion. The post-cursor suffix was removed after
+    // a 33-call live API matrix showed it is actively harmful: a large suffix
+    // makes FIM echo the rest of the document as the "middle" (multi-line
+    // garbage), and even a short suffix returns empty on mid-word prompts
+    // (3/3). With no suffix, FIM completes consistently in every position.
+    const suffixText = "";
 
     const ghost = await computeGhost(preCursorText, systemPrompt, {
       continueText: async (p, raw) => {
-        // FIM path: preferred ALWAYS (empty suffix included). It completes
-        // mid-word reliably and signals the boundary via leading whitespace.
-        let fimResult: string | null = null;
-        let fimTried = false;
+        // FIM path: preferred ALWAYS (empty suffix = prefix completion). It
+        // completes mid-word reliably and signals the boundary via leading
+        // whitespace. The chat path was removed: it returns empty for every
+        // mid-word/EOL prompt shape (9/9 in the matrix) and only stalled.
         if (raw !== undefined && this.provider.generateFimOnce) {
-          fimTried = true;
           try {
-            fimResult = await this.provider.generateFimOnce(raw, suffixText, opts);
-            diagLog(`FIM result: ${JSON.stringify((fimResult ?? "").slice(0, 80))} (suffix ${suffixText.length} chars)`);
+            const fimResult = await this.provider.generateFimOnce(raw, suffixText, opts);
+            diagLog(`FIM result: ${JSON.stringify((fimResult ?? "").slice(0, 80))}`);
+            return fimResult;
           } catch (error) {
-            diagLog(`FIM completion failed — falling back to chat path: ${String(error)}`);
+            diagLog(`FIM completion failed: ${String(error)}`);
+            return null;
           }
         }
-        if (fimTried && fimResult !== null) {
-          // Raw FIM fills are boundary-sized: they routinely end mid-word or
-          // on closed-class words ("ence with some ", " dog. This is a ") even
-          // when they are exactly the right continuation. The old
-          // isIncompleteFill veto + chat fallback produced a NULL result for
-          // 8/8 measured fills (live API matrix) because the chat path returns
-          // empty for mid-word prompts — i.e. it vetoed GOOD completions.
-          // Show the FIM fill as-is; the only vetoes are empty / stuck-marker,
-          // applied in computeGhost's clean() step.
-          return fimResult;
-        }
-        const chatResult = await generate(
+        return await generate(
           [
             { role: "system", content: systemPrompt },
             { role: "user", content: p },
           ],
           { maxTokens: opts.maxTokens, temperature: opts.temperature },
         );
-        diagLog(`chat fallback result: ${JSON.stringify((chatResult ?? "").slice(0, 80))}`);
-        return chatResult;
       },
     }, {
       maxSentences: this.settings.outputLimitSentences > 0
