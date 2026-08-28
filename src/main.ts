@@ -625,14 +625,24 @@ Promise.defer(async () => {
    * Falls back to tracked when matching fails (code blocks, tables, wrapped
    * paragraphs). */
   const deriveCaretFromDomSelection = (markdown: string): Position | null => {
+    const trace = (msg: string) => diagLog(`deriveCaret TRACE: ${msg}`);
     try {
       const sel = window.getSelection();
-      if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) return null;
-      const anchor = sel.anchorNode;
-      if (!anchor || !editor.writingArea.contains(anchor)) return null;
-      const elem = anchor.nodeType === Node.TEXT_NODE ? anchor.parentElement : (anchor as Element);
-      if (!elem || elem.closest(".CodeMirror") || elem.closest("input") || elem.classList?.contains("ty-input"))
+      if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) {
+        trace(`selection bad: sel=${!!sel} rangeCount=${sel?.rangeCount ?? -1} collapsed=${sel?.isCollapsed}`);
         return null;
+      }
+      const anchor = sel.anchorNode;
+      if (!anchor || !editor.writingArea.contains(anchor)) {
+        trace(`anchor outside writingArea: ${anchor ? `${anchor.nodeName}#${(anchor as Element).className}` : "null"}`);
+        return null;
+      }
+      const elem = anchor.nodeType === Node.TEXT_NODE ? anchor.parentElement : (anchor as Element);
+      if (!elem || elem.closest(".CodeMirror") || elem.closest("input") || elem.classList?.contains("ty-input")) {
+        trace(`elem rejected: ${elem ? `${elem.tagName}.${(elem as Element).className}` : "null"}`);
+        return null;
+      }
+      trace(`anchor=${anchor.nodeName} offset=${sel.anchorOffset} elem=${elem.tagName}.${elem.className}`);
 
       const norm = markdown.replace(/\r\n/g, "\n");
       const lines = norm.split("\n");
@@ -646,10 +656,18 @@ Promise.defer(async () => {
       }
       if (!caretBlock || caretBlock === editor.writingArea)
         caretBlock = elem.closest("li, [mdtype]") || elem;
-      if (!caretBlock || caretBlock === editor.writingArea) return null;
+      if (!caretBlock || caretBlock === editor.writingArea) {
+        trace(`no caretBlock: ${caretBlock ? `${caretBlock.tagName}` : "null"}`);
+        return null;
+      }
+      trace(`caretBlock=${caretBlock.tagName}.${caretBlock.className}`);
 
       const caretBlockText = (caretBlock.textContent ?? "").replace(/\s+/g, " ").trim();
-      if (!caretBlockText) return null;
+      if (!caretBlockText) {
+        trace(`caretBlockText empty`);
+        return null;
+      }
+      trace(`caretBlockText="${caretBlockText.slice(0, 60)}"`);
 
       // Sequential matching: walk top-level blocks, matching each to the next
       // markdown line. Handles repeated lines and multi-line blocks.
@@ -692,7 +710,11 @@ Promise.defer(async () => {
       forEachTopBlock(editor.writingArea, (el, isCaret) => {
         const blockText = (el.textContent ?? "").replace(/\s+/g, " ").trim();
         const matched = matchBlockToLine(blockText, mdLineIdx);
-        if (matched < 0) return false; // skip unmatched (code/table)
+        if (matched < 0) {
+          trace(`block NO-MATCH isCaret=${isCaret} "${blockText.slice(0, 50)}" mdLineIdx=${mdLineIdx}`);
+          return false; // skip unmatched (code/table)
+        }
+        trace(`block matched isCaret=${isCaret} line=${matched} "${blockText.slice(0, 50)}"`);
         if (isCaret) {
           // Compute intra-block offset, handling both text-node anchors
           // (common in mid-paragraph) and element anchors (common when
@@ -729,10 +751,14 @@ Promise.defer(async () => {
             if (!collectBefore(el, anchor, sel.anchorOffset)) return -1;
             return acc;
           })();
-          if (intraOffset < 0) return false;
+          if (intraOffset < 0) {
+            trace(`intraOffset FAILED anchor=${anchor.nodeName} offset=${sel.anchorOffset}`);
+            return false;
+          }
           const raw = lines[matched]!;
           const bulletLen = (raw.match(/^([-*+]\s+|\d+[.)]\s+|#{1,6}\s+|>\s?)/)?.[1] ?? "").length;
           result = { line: matched, character: bulletLen + intraOffset };
+          trace(`RESULT line=${matched} char=${bulletLen + intraOffset} (bulletLen=${bulletLen} intra=${intraOffset})`);
           return true;
         }
         // Preceding block: advance past its line. Blank lines between blocks
