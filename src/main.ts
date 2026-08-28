@@ -735,25 +735,13 @@ Promise.defer(async () => {
           result = { line: matched, character: bulletLen + intraOffset };
           return true;
         }
-        // Preceding block: consume its line(s). Count contiguous lines that
-        // don't match the NEXT block (multi-line code/table blocks).
-        const nextEl = el.nextElementSibling;
-        if (nextEl) {
-          const nextText = (nextEl.textContent ?? "").replace(/\s+/g, " ").trim();
-          let consumed = 1;
-          while (matched + consumed < lines.length) {
-            const cl = lines[matched + consumed]!;
-            const clStripped = cl
-              .replace(/^```.*$/, "")
-              .replace(/^[-*+]\s+|\d+[.)]\s+|#{1,6}\s+|>\s?/, "")
-              .replace(/\s+/g, " ").trim();
-            if (clStripped === nextText) break;
-            consumed++;
-          }
-          mdLineIdx = matched + consumed;
-        } else {
-          mdLineIdx = matched + 1;
-        }
+        // Preceding block: advance past its line. Blank lines between blocks
+        // are skipped by the forward search. Do NOT try to count how many
+        // lines a block spans — a UL's textContent is all its items
+        // concatenated (never matching a single markdown line), so the old
+        // heuristic ran to the end of the document and desynced every
+        // subsequent list-item match (breaks all triggers after a list).
+        mdLineIdx = matched + 1;
         return false;
       });
 
