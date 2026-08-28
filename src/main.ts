@@ -618,10 +618,12 @@ Promise.defer(async () => {
   };
 
   /* Derive the caret directly from the live DOM selection at trigger time.
-   * Counts text nodes under #write (md-meta spans included — they hold the
-   * raw markdown chars; CodeMirror islands excluded), then maps the global
-   * offset to {line, character} against the current markdown. Returns null
-   * when the selection isn't a collapsed caret in the editor. */
+   * Walks the top-level blocks of the editor (flattening list items), matches
+   * each block's rendered text to its markdown line SEQUENTIALLY, and computes
+   * the caret's {line, character} exactly — including `- ` bullets, heading
+   * markers, and block newlines that the naive text-node TreeWalker missed.
+   * Falls back to tracked when matching fails (code blocks, tables, wrapped
+   * paragraphs). */
   const deriveCaretFromDomSelection = (markdown: string): Position | null => {
     try {
       const sel = window.getSelection();
@@ -632,27 +634,107 @@ Promise.defer(async () => {
       if (!elem || elem.closest(".CodeMirror") || elem.closest("input") || elem.classList?.contains("ty-input"))
         return null;
 
-      const walker = document.createTreeWalker(editor.writingArea, NodeFilter.SHOW_TEXT, {
-        acceptNode: (n) =>
-          n.parentElement?.closest(".CodeMirror") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
-      });
-      let offset = -1;
-      let acc = 0;
-      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-        if (n === anchor) {
-          offset = acc + sel.anchorOffset;
-          break;
-        }
-        acc += n.textContent?.length ?? 0;
-      }
-      if (offset < 0) return null;
-
       const norm = markdown.replace(/\r\n/g, "\n");
-      if (offset > norm.length) offset = norm.length;
-      const before = norm.slice(0, offset);
-      const line = before.split("\n").length - 1;
-      const character = offset - (before.lastIndexOf("\n") + 1);
-      return { line, character };
+      const lines = norm.split("\n");
+
+      // Find the caret's block: walk up to the top-level block (direct child
+      // of #write), or the closest list item / mdtype element.
+      let caretBlock: Element | null = elem;
+      while (caretBlock && caretBlock.parentElement && caretBlock.parentElement !== editor.writingArea) {
+        if (caretBlock.tagName === "LI" || caretBlock.classList.contains("md-list-item")) break;
+        caretBlock = caretBlock.parentElement;
+      }
+      if (!caretBlock || caretBlock === editor.writingArea)
+        caretBlock = elem.closest("li, [mdtype]") || elem;
+      if (!caretBlock || caretBlock === editor.writingArea) return null;
+
+      const caretBlockText = (caretBlock.textContent ?? "").replace(/\s+/g, " ").trim();
+      if (!caretBlockText) return null;
+
+      // Sequential matching: walk top-level blocks, matching each to the next
+      // markdown line. Handles repeated lines and multi-line blocks.
+      let mdLineIdx = 0;
+      const matchBlockToLine = (blockText: string, fromIdx: number): number => {
+        for (let i = fromIdx; i < lines.length; i++) {
+          const stripped = lines[i]!
+            .replace(/^[-*+]\s+/, "") // "- ", "* ", "+ "
+            .replace(/^\d+[.)]\s+/, "") // "1. ", "2) "
+            .replace(/^#{1,6}\s+/, "") // "## "
+            .replace(/^>\s?/, "") // "> "
+            .replace(/^```.*$/, "") // code fence markers
+            .replace(/\s+/g, " ").trim();
+          if (stripped === blockText) return i;
+        }
+        return -1;
+      };
+
+      const forEachTopBlock = (
+        root: Element,
+        fn: (el: Element, isCaret: boolean) => boolean | void,
+      ): boolean => {
+        for (const child of root.children) {
+          if (child.nodeType !== Node.ELEMENT_NODE) continue;
+          if (child.tagName === "UL" || child.tagName === "OL") {
+            for (const li of child.children) {
+              if (li.nodeType !== Node.ELEMENT_NODE) continue;
+              const stop = fn(li as Element, li === caretBlock || li.contains(caretBlock));
+              if (stop) return true;
+            }
+          } else {
+            const stop = fn(child as Element, child === caretBlock || child.contains(caretBlock));
+            if (stop) return true;
+          }
+        }
+        return false;
+      };
+
+      let result: Position | null = null;
+      forEachTopBlock(editor.writingArea, (el, isCaret) => {
+        const blockText = (el.textContent ?? "").replace(/\s+/g, " ").trim();
+        const matched = matchBlockToLine(blockText, mdLineIdx);
+        if (matched < 0) return false; // skip unmatched (code/table)
+        if (isCaret) {
+          // Compute intra-block offset: walk text nodes within the block.
+          const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+          let acc = 0;
+          let found = false;
+          for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+            if (n === anchor) {
+              acc += sel.anchorOffset;
+              found = true;
+              break;
+            }
+            acc += n.textContent?.length ?? 0;
+          }
+          if (!found) return false;
+          const raw = lines[matched]!;
+          const bulletLen = (raw.match(/^([-*+]\s+|\d+[.)]\s+|#{1,6}\s+|>\s?)/)?.[1] ?? "").length;
+          result = { line: matched, character: bulletLen + acc };
+          return true;
+        }
+        // Preceding block: consume its line(s). Count contiguous lines that
+        // don't match the NEXT block (multi-line code/table blocks).
+        const nextEl = el.nextElementSibling;
+        if (nextEl) {
+          const nextText = (nextEl.textContent ?? "").replace(/\s+/g, " ").trim();
+          let consumed = 1;
+          while (matched + consumed < lines.length) {
+            const cl = lines[matched + consumed]!;
+            const clStripped = cl
+              .replace(/^```.*$/, "")
+              .replace(/^[-*+]\s+|\d+[.)]\s+|#{1,6}\s+|>\s?/, "")
+              .replace(/\s+/g, " ").trim();
+            if (clStripped === nextText) break;
+            consumed++;
+          }
+          mdLineIdx = matched + consumed;
+        } else {
+          mdLineIdx = matched + 1;
+        }
+        return false;
+      });
+
+      return result;
     } catch (e) {
       diagLog(`deriveCaret EXCEPTION: ${String(e)}`);
       return null;
@@ -667,16 +749,18 @@ Promise.defer(async () => {
       return;
     }
 
-    /* Prefer the change-event tracker: it computes positions in MARKDOWN
-     * space from the edit diff, which is exact. The DOM derivation is a
-     * fallback for when the tracker is null — its text-node offset does not
-     * account for list bullets (`- ` are CSS pseudo-elements, absent from
-     * DOM text) so it lands short in lists. */
+    /* Prefer a fresh DOM-derived caret. The change-event tracker only updates
+     * on markdown EDITS — it goes stale the moment the user clicks/moves the
+     * caret without typing, and every subsequent trigger then uses the old
+     * position (seen in logs: tracked frozen at the last accepted insert
+     * while derived tracked the real caret across lines). The block-matching
+     * derivation reads the live selection and accounts for list bullets,
+     * heading markers and block newlines exactly. */
     const tracked = state.caretPosition;
     const derived = deriveCaretFromDomSelection(state.markdown);
-    const caretPosition = tracked ?? derived;
+    const caretPosition = derived ?? tracked;
     diagLog(
-      `trigger${manual ? " (manual)" : ""} caret=${JSON.stringify(caretPosition)} source=${tracked ? "tracked" : "dom"} ` +
+      `trigger${manual ? " (manual)" : ""} caret=${JSON.stringify(caretPosition)} source=${derived ? "dom" : "tracked"} ` +
         `tracked=${JSON.stringify(tracked)} derived=${JSON.stringify(derived)}` +
         (caretPosition ? ` ctx=${JSON.stringify(ctxAround(state.markdown, caretPosition))}` : ""),
     );
