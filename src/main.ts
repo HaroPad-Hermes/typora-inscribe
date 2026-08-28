@@ -707,14 +707,19 @@ Promise.defer(async () => {
       };
 
       let result: Position | null = null;
+      trace(
+        `writingArea children: ${Array.from(editor.writingArea.children)
+          .map((c) => c.tagName)
+          .join(",")}`,
+      );
       forEachTopBlock(editor.writingArea, (el, isCaret) => {
         const blockText = (el.textContent ?? "").replace(/\s+/g, " ").trim();
         const matched = matchBlockToLine(blockText, mdLineIdx);
         if (matched < 0) {
-          trace(`block NO-MATCH isCaret=${isCaret} "${blockText.slice(0, 50)}" mdLineIdx=${mdLineIdx}`);
+          trace(`block NO-MATCH isCaret=${isCaret} tag=${el.tagName} "${blockText.slice(0, 50)}" mdLineIdx=${mdLineIdx}`);
           return false; // skip unmatched (code/table)
         }
-        trace(`block matched isCaret=${isCaret} line=${matched} "${blockText.slice(0, 50)}"`);
+        trace(`block matched isCaret=${isCaret} tag=${el.tagName} line=${matched} "${blockText.slice(0, 50)}"`);
         if (isCaret) {
           // Compute intra-block offset, handling both text-node anchors
           // (common in mid-paragraph) and element anchors (common when
