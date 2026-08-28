@@ -694,22 +694,45 @@ Promise.defer(async () => {
         const matched = matchBlockToLine(blockText, mdLineIdx);
         if (matched < 0) return false; // skip unmatched (code/table)
         if (isCaret) {
-          // Compute intra-block offset: walk text nodes within the block.
-          const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
-          let acc = 0;
-          let found = false;
-          for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-            if (n === anchor) {
-              acc += sel.anchorOffset;
-              found = true;
-              break;
+          // Compute intra-block offset, handling both text-node anchors
+          // (common in mid-paragraph) and element anchors (common when
+          // clicking at the end of a line, where the browser sets
+          // anchorNode to the block element with anchorOffset = child count).
+          const intraOffset = ((): number => {
+            if (anchor.nodeType === Node.TEXT_NODE) {
+              const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+              let acc = 0;
+              for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+                if (n === anchor) return acc + sel.anchorOffset;
+                acc += n.textContent?.length ?? 0;
+              }
+              return -1;
             }
-            acc += n.textContent?.length ?? 0;
-          }
-          if (!found) return false;
+            // Element anchor: caret at node boundary in `anchor`.
+            // Walk the block's flattened nodes, accumulating text before
+            // the boundary inside `anchor`.
+            const collectBefore = (node: Node, target: Node, off: number): boolean => {
+              if (node === target) {
+                for (let i = 0; i < off; i++)
+                  acc += (target.childNodes[i]?.textContent ?? "").length;
+                return true;
+              }
+              if (node.nodeType === Node.TEXT_NODE) {
+                acc += node.textContent?.length ?? 0;
+                return false;
+              }
+              for (const ch of node.childNodes)
+                if (collectBefore(ch, target, off)) return true;
+              return false;
+            };
+            let acc = 0;
+            if (!collectBefore(el, anchor, sel.anchorOffset)) return -1;
+            return acc;
+          })();
+          if (intraOffset < 0) return false;
           const raw = lines[matched]!;
           const bulletLen = (raw.match(/^([-*+]\s+|\d+[.)]\s+|#{1,6}\s+|>\s?)/)?.[1] ?? "").length;
-          result = { line: matched, character: bulletLen + acc };
+          result = { line: matched, character: bulletLen + intraOffset };
           return true;
         }
         // Preceding block: consume its line(s). Count contiguous lines that
