@@ -7,6 +7,7 @@ import { setGlobalVar } from "./utils/tools";
  * Plugin version.
  */
 export const VERSION = "0.1.0";
+export const BUILD = "c0b2817";
 
 /**
  * Inscribe plugin directory.

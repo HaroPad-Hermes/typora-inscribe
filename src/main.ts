@@ -5,7 +5,7 @@ import { ChatSession } from "./client/chat";
 import { attachChatToggle } from "./chat-toggle";
 import CompletionService from "./completions/service";
 import { attachSuggestionPanel } from "./components/SuggestionPanel";
-import { VERSION } from "./constants";
+import { BUILD, VERSION } from "./constants";
 import { diagLog } from "./diag";
 import { logger } from "./logging";
 import { OpenAICompatibleProvider } from "./providers/openai-compat";
@@ -20,6 +20,7 @@ import type { LspPosition as Position } from "./utils/tools";
 import "./styles.scss";
 
 logger.info("Inscribe plugin activated. Version:", VERSION);
+diagLog(`[boot] plugin activated: v${VERSION} build ${BUILD} hotkey=${JSON.stringify(settings.triggerHotkey)} apiKey=${settings.apiKey ? "set" : "MISSING"}`);
 
 window.addEventListener("error", (e) => {
   diagLog(`[window.error] ${e.message} @ ${e.filename}:${e.lineno}`);
