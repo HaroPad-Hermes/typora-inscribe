@@ -1,0 +1,5 @@
+# One canonical end-of-line for the repo.
+# Without this, `core.autocrlf=true` on Windows checks out CRLF while prettier
+# (endOfLine: "lf" by default) rejects every line — lint fails on every Windows
+# machine while passing in CI. See CONSTRAINTS.md, P0.4.
+* text=auto eol=lf
