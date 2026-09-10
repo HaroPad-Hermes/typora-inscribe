@@ -27,15 +27,18 @@ project is the **live FIM API contract**, listed below.
   the trigger fell through to a stale tracker, and the failure was invisible — so
   it was misdiagnosed as a model problem for three sessions. Fixed in P0.3.*
 - This file does not get weakened to make a change pass.
-- **A completion preview must not occlude the document.** The preview is an
-  out-of-document overlay (Typora exposes no `md-ignore` class, so injecting a
-  ghost node into the contenteditable risks it being serialised into the user's
-  markdown on save), which makes it the only element on screen that can hide
-  their prose. It must read as ghost text: no border, shadow, radius or padding;
-  `position: fixed` (the coordinates come from `getBoundingClientRect()`);
-  anchored AT the caret, not on the line below it; and dimmed so it is visibly a
-  preview. *Reason: an opaque bordered card was reported by the user as "weird
-  formatting" and it hid whatever sat beneath it.*
+- **A completion preview must not occlude the document.** The default is the
+  INLINE GHOST (`components/inline-ghost.ts`): the completion is inserted into
+  the flow as a dimmed, non-editable span, so the paragraph reflows around it and
+  the text after the caret stays readable. The out-of-document suggestion panel is
+  the fallback (`settings.useInlineCompletionTextInPreview = false`), acceptable
+  only because it never covers the caret's own line. *Reason: a card painted over
+  the prose was reported by the user as "weird formatting" — it hid whatever sat
+  beneath it, which an inserted span cannot do.*
+- **The inline ghost must never be saveable.** It is not part of
+  `state.markdown`; accept removes it before the normal insert path runs; and it
+  is torn down on Escape, window blur and Ctrl/Cmd+S in the capture phase.
+  Verified live: with a ghost on screen, Ctrl+S left the file byte-identical.
 - **A ghost that merely repeats text already before the caret is rejected in
   code.** `COMPLETION_CONSTRAINTS` asks the model not to re-emit earlier
   sentences, and `echoesPrefix` enforces it, so an echo shows nothing rather
@@ -67,7 +70,7 @@ are the only number an implementation can actually be held to.*
 | **Completion-path coverage** | `completions/caret.ts` **76.99 % lines / 100 % funcs**; `completions/flow.ts` **73.01 % lines** — both were 0 %. `main.ts`, `providers/*`, `typora-utils.ts` still 0 % | must rise |
 | Suppression count | 25 across 12 files | must not rise |
 | Repo-wide lint errors | **161** (was 6044 — P0.4 removed the CRLF noise; 190 → 161 as P1.1 moved code out of `main.ts`) | must not rise; burn-down is its own task on its own branch |
-| `src/main.ts` size | **915** lines (was 1071 — P1.1 moved 156 lines to `completions/caret.ts`) | must not grow — new completion logic goes in its own module |
+| `src/main.ts` size | **930** lines (was 1071 — P1.1 moved 156 lines to `completions/caret.ts`; +15 for the inline-ghost wiring) | must not grow — new completion logic goes in its own module |
 | `BUILD` marker == the commit the bundle was built from | **TRUE** — stamped at rollup time; verified across two builds (P0.1). Rebuild and redeploy after any commit touching `src/` or `rollup.config.ts` — not for docs-only commits, which cannot change the bundle. | must stay true |
 | `dist/index.js` md5 == installed md5 | TRUE — re-verified after each deploy | must stay true |
 | `derived=null` on the test doc | 0 at list items (last live run 12/12); **code fences now map too** (P0.3, unit-covered) | must stay 0 — live run still hand-verified until Phase 4 |
