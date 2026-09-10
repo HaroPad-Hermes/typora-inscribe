@@ -43,6 +43,15 @@ project is the **live FIM API contract**, listed below.
   code.** `COMPLETION_CONSTRAINTS` asks the model not to re-emit earlier
   sentences, and `echoesPrefix` enforces it, so an echo shows nothing rather
   than a "suggestion" the user has already written. The rejection is logged.
+  *The guard is load-bearing, not belt-and-braces: the FIM endpoint has no
+  instruction channel at all, so the rule the code writes can never reach the
+  model. Measured live — `messages`, `system`, `system_prompt` and `instruction`
+  are all accepted with HTTP 200 and all ignored; prepending the instruction to
+  `prompt` collapses the output to `"*"`; the chat path (which can carry it)
+  returns an empty completion 18/18 at an end-of-line prompt; and window size is
+  not the cause (4/16 repetition cases at 2 lines, 7/16 at 8, 2/15 at 16).
+  `frequency_penalty` / `presence_penalty` ARE accepted by the endpoint but their
+  effect is unproven — see `~/workspace/fim-penalty-probe/`.*
 
 ## Enforced with numbers
 
