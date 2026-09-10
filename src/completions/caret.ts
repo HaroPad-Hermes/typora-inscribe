@@ -1,5 +1,7 @@
 import type { LspPosition as Position } from "../utils/tools";
 
+import { mapTableBlock } from "./table";
+
 /**
  * Structural markdown prefix on a line: list bullets/numbers, heading hashes,
  * blockquote markers. Its LENGTH is what has to be added back to the rendered
@@ -177,6 +179,35 @@ export function deriveCaretFromDomSelection(options: CaretDerivationOptions): Po
         .join(",")}`,
     );
     forEachTopBlock(writingArea, (el, isCaret) => {
+      // A table renders as ONE figure whose textContent is every cell
+      // concatenated with no separator, so `matchBlockLines` can never match it
+      // and the old code skipped it silently — leaving the caller on a stale
+      // caret. Tables are mapped by CELL instead; see completions/table.ts.
+      if (el.tagName === "FIGURE") {
+        const table = mapTableBlock({
+          anchor,
+          anchorOffset: sel.anchorOffset,
+          figure: el,
+          fromLine: mdLineIdx,
+          lines,
+          trace,
+        });
+        if (table.lineCount > 0 && !isCaret) mdLineIdx = table.startLine + table.lineCount;
+        if (table.caret) {
+          result = table.caret;
+          trace(
+            `RESULT line=${table.caret.line} char=${table.caret.character} (table cell mapping, blockStart=${table.startLine})`,
+          );
+          return true;
+        }
+        trace(
+          `block NO-MATCH isCaret=${String(isCaret)} tag=FIGURE reason="${table.reason ?? "unmapped"}"`,
+        );
+        // Never fall through when the caret is inside this table: no later block
+        // can be the caret's block, and letting one match is the stale-caret bug
+        // this branch exists to remove.
+        return isCaret;
+      }
       const blockText = el.textContent.replace(/\s+/g, " ").trim();
       const matched = matchBlockLines(blockText, mdLineIdx);
       if (!matched) {
