@@ -30,13 +30,13 @@ project is the **live FIM API contract**, listed below.
 | Dimension | Rule | Checked by | Runs at |
 |-----------|------|-----------|---------|
 | Types | Zero type errors | `npx tsc --noEmit -p tsconfig.build.json` | every edit (~8 s) |
-| Lint | Zero errors **and** zero warnings | `npm run lint` (needs LF — see Known gaps) | every edit |
+| Lint (changed files) | Zero errors on the files a change touches | `npx eslint <changed files>` | every edit |
 | Tests | All pass, none skipped | `npx vitest run` | every edit (~2 s) |
-| Public type surface | `typroof` passes | `npm run test-types` (locally broken — see Known gaps) | CI |
+| Public type surface | `typroof` passes | `npm run test-types` | not enforceable yet — see Known gaps |
 | Build | Bundle rolls up clean | `npm run build:dev` | task end |
 | Suppressions | Count ≤ **25**, never rises | `rg -c '@ts-ignore\|@ts-expect-error\|eslint-disable' src/` | task end |
 | Changed-line coverage | ≥ **80 %** of lines a change touches | `npm run test:cov` + `git diff` | task end |
-| Dependency risk (shipped) | Zero advisories in **runtime** deps | `npm audit --omit=dev` | CI |
+| Dependency risk (shipped) | Zero advisories in **runtime** deps | `npm audit --omit=dev` | task end |
 
 *Changed-line coverage is 80 % rather than project coverage because project
 coverage is inherited at 35 % and cannot be moved by this change; changed lines
@@ -50,9 +50,10 @@ are the only number an implementation can actually be held to.*
 | Project line coverage | 38.27 % | must not fall |
 | **Completion-path coverage** | **0 %** — `main.ts`, `completions/*`, `providers/*`, `typora-utils.ts` are never imported by a test | must rise (Phase 1) |
 | Suppression count | 25 across 12 files | must not rise |
+| Repo-wide lint errors | **190** (was 6044 — P0.4 removed the CRLF noise) | must not rise; burn-down is its own task on its own branch |
 | `src/main.ts` size | 1071 lines | must not grow — new completion logic goes in its own module |
-| `BUILD` marker == `git rev-parse --short HEAD` | **FALSE** — marker frozen at `c0b2817`, HEAD `bcce35a` | must become true (P0.1) |
-| `dist/index.js` md5 == installed md5 | TRUE (`5cb9e711…`) | must stay true |
+| `BUILD` marker == `git rev-parse --short HEAD` | **TRUE** — stamped at rollup time; verified across two builds (P0.1) | must stay true |
+| `dist/index.js` md5 == installed md5 | TRUE — re-verified after each deploy | must stay true |
 | `derived=null` at list items, on the test doc | 0 (last live run: 12/12 derivations) | must stay 0 — currently verified only by hand, automated in Phase 4 |
 | Dev-toolchain advisories | 29 (17 high, 3 critical) — **dev-only** | must not rise |
 
@@ -67,14 +68,22 @@ currently green.*
 
 | Gap | Evidence | Fix | Status |
 |-----|----------|-----|--------|
-| **CRLF breaks lint on every Windows checkout** | `core.autocrlf=true`, no `.gitattributes`, `prettier.config.cjs` sets no `endOfLine` (defaults to `lf`) → `npm run lint` → **6044 errors**, nearly all `Delete ␍`. CI passes because Ubuntu checks out LF. | Add `.gitattributes` with `* text=auto eol=lf`, set `core.autocrlf=false`, re-checkout | open — P0.4 |
-| **`typroof` fails locally** | `npm run test-types` → `Error: Cannot find module symbol for ".../typroof/assertions/assert.d.ts"` on Node v24.13.0. The file is LF, so it is not the CRLF issue. | Confirm CI's `test-types` job is actually green; if it is, this is a local Node-version gap and the gate lives in CI only. Otherwise it is a genuine exception. | open — P0.5 |
+| **CRLF breaks lint on every Windows checkout** | `core.autocrlf=true`, no `.gitattributes`, `prettier.config.cjs` sets no `endOfLine` (defaults to `lf`) → `npm run lint` → **6044 errors**, nearly all `Delete ␍`. | `.gitattributes` with `* text=auto eol=lf` + `core.autocrlf=false` + forced re-checkout | **DONE — P0.4.** 6044 → 190; the remaining 190 are unrelated to EOL |
+| **CI has never executed** | `gh api repos/HaroPad-Hermes/typora-inscribe/actions/runs --jq .total_count` → **0**, while `actions/permissions` reports `enabled: true`. The workflow file exists and has never once run, so every "Runs at: CI" gate in this file was aspirational. | Either confirm the workflow triggers on a real push, or drop "CI" as a stage and run those checks locally | open — P0.5 |
+| **`typroof` fails locally** | `npm run test-types` → `Error: Cannot find module symbol for ".../typroof/assertions/assert.d.ts"`. typroof 0.6.0 declares Node ≥20 and this is Node v24.13.0, so it is a typroof/TypeScript-5.9 incompatibility, not a Node gate; the file it chokes on is LF, so it is not the CRLF issue either. | Pin the TypeScript version typroof expects, or record a real exception. It cannot be parked in CI — see the row above. | open — P0.5 |
 
-*The CRLF item is not cosmetic housekeeping. An LF/CRLF mismatch between
-`editor.getMarkdown()` and the change-event payload was the root cause of the
-tracker-nulling bug fixed in `df9ac20` — every keystroke diffed as a multi-hunk
-change. Normalising the repo to LF removes that entire class of failure rather
-than re-fixing it per bug.*
+*Consequence for P0.5: `typroof` cannot be parked in CI, because there is no CI.
+It has to be resolved locally — fix the tool, pin the TypeScript version it
+expects, or record it as an exception with a real owner.*
+
+*Why this matters beyond lint: an LF/CRLF mismatch is this project's recurring
+failure shape. The tracker-nulling bug (`df9ac20`) was the same mismatch, but at
+**runtime** — `editor.getMarkdown()` and the change-event payload disagreed on
+EOL, so every keystroke diffed as a multi-hunk change; that one was fixed by
+normalising inside `computeTextChanges` and is a separate fix. Source-file EOLs
+are the other instance: they cannot affect runtime behaviour, but they make every
+diff noisy and accounted for 5854 of the 6044 lint errors. One canonical EOL
+removes the source-side half of the pattern.*
 
 ## Exceptions
 
