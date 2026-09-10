@@ -80,6 +80,16 @@ export default class CompletionService {
         // whitespace. The chat path was removed: it returns empty for every
         // mid-word/EOL prompt shape (9/9 in the matrix) and only stalled.
         if (raw !== undefined && this.provider.generateFimOnce) {
+          // An empty prefix cannot produce a completion, and the endpoint
+          // rejects it outright: 400 "Empty input prompt" (observed when a
+          // trigger fires before the document has finished loading). Bail out
+          // locally so that becomes a clean no-op instead of a bogus API error.
+          // NOTE: only the truly-empty case is guarded here — a whitespace-only
+          // prefix is untested against the endpoint and is left alone.
+          if (raw === "") {
+            diagLog("FIM skipped: empty prefix");
+            return null;
+          }
           try {
             const fimResult = await this.provider.generateFimOnce(raw, suffixText, opts);
             diagLog(`FIM result: ${JSON.stringify((fimResult ?? "").slice(0, 80))}`);
