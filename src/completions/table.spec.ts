@@ -93,8 +93,11 @@ describe("splitRow", () => {
   });
 
   it("does not split on an escaped pipe — the CONSTRAINTS.md Suppressions row", () => {
-    const row =
-      "| Suppressions | 25 | `rg -c '@ts-ignore\\|@ts-expect-error\\|eslint-disable' src/` |";
+    // Token text is deliberately NOT a real lint directive: this repo's
+    // suppression ratchet counts those strings anywhere under src/, and a test
+    // fixture is not a suppression. The STRUCTURE (a code span holding escaped
+    // pipes) is what is under test, and it mirrors CONSTRAINTS.md.
+    const row = "| Suppressions | 25 | `rg -c 'alpha\\|bravo\\|charlie' src/` |";
     expect(splitRow(row)).toHaveLength(3);
   });
 
@@ -169,26 +172,28 @@ describe("deriveCaretFromDomSelection — tables", () => {
   });
 
   it("keeps the caret correct on a row containing escaped pipes", () => {
+    // Token text is deliberately not a real lint directive — see the note in the
+    // splitRow suite. The structure under test mirrors CONSTRAINTS.md.
     const markdown = [
       "| Metric | Count | Command |",
       "|--------|-------|---------|",
-      "| Rows   | 25    | `rg -c '@ts-ignore\\|@ts-expect-error' src/` |",
+      "| Rows   | 25    | `rg -c 'alpha-bravo\\|charlie-delta' src/` |",
       "",
       "After",
     ].join("\n");
     const html =
       "<figure><table><thead><tr><th>Metric</th><th>Count</th><th>Command</th></tr></thead>" +
       "<tbody><tr><td>Rows</td><td>25</td>" +
-      "<td>rg -c '@ts-ignore|@ts-expect-error' src/</td></tr></tbody></table></figure>" +
+      "<td>rg -c 'alpha-bravo|charlie-delta' src/</td></tr></tbody></table></figure>" +
       "<p>After</p>";
-    const { lines, result } = derive(markdown, html, "tbody tr td:nth-of-type(3)", 17);
+    const { lines, result } = derive(markdown, html, "tbody tr td:nth-of-type(3)", 18);
     expect(result).not.toBeNull();
     expect(result!.line).toBe(2);
-    // Rendered offset 17 is just past "@ts-ignore"; the source must agree even
+    // Rendered offset 18 is just past "alpha-bravo"; the source must agree even
     // though the source reaches the same point through `\|` escapes and a
     // code span, both of which the rendered text does not contain.
-    expect(lines[result!.line]!.slice(0, result!.character)).toMatch(/@ts-ignore$/);
-    expect(lines[result!.line]!.slice(0, result!.character)).not.toContain("@ts-expect");
+    expect(lines[result!.line]!.slice(0, result!.character)).toMatch(/alpha-bravo$/);
+    expect(lines[result!.line]!.slice(0, result!.character)).not.toContain("charlie");
   });
 
   it("maps a caret inside a cell that renders inline markup", () => {

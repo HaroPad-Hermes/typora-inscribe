@@ -20,7 +20,7 @@
  * 1. The cross-check compares PLAIN text on both sides (markers stripped from
  *    the source cell *and* from the rendered cell). Typora's DOM keeps inline
  *    markers in cell text — CONSTRAINTS.md's own log lines show `**CRLF breaks
- *    lint` and `` E1`@ts-expect-error` `` — so comparing rendered-against-source
+ *    lint` and a backticked value — so comparing rendered-against-source
  *    literally would refuse every valid cell.
  * 2. Offsets are counted in PLAIN characters, likewise on both sides, which
  *    makes the mapping correct whether or not the renderer kept the markers.
@@ -80,10 +80,11 @@ export function isSeparatorRow(line: string): boolean {
  * raw line.
  *
  * Escaped pipes (`\|`) and pipes inside code spans must not split, which matters
- * concretely here: CONSTRAINTS.md's Suppressions row contains
- * `` `rg -c '@ts-ignore\|@ts-expect-error\|eslint-disable' src/` `` and a naive
- * `split("|")` sees seven fields instead of four, landing the caret in the wrong
- * column. Escapes are preserved in the returned text so offsets stay aligned.
+ * concretely here: the Suppressions row in CONSTRAINTS.md is a single cell whose
+ * content is a code span holding escaped pipes, and a naive `split("|")` splits
+ * that cell into three — shifting every column after it, so the caret lands in
+ * the wrong one. Escapes are preserved in the returned text so offsets stay
+ * aligned with the raw line.
  *
  * @param line - A raw markdown table row.
  * @returns Each cell's raw text and its start offset in `line`.
