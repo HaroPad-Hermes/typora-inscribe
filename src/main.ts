@@ -6,6 +6,7 @@ import { attachChatToggle } from "./chat-toggle";
 import { deriveCaretFromDomSelection } from "./completions/caret";
 import CompletionService from "./completions/service";
 import { attachSuggestionPanel } from "./components/SuggestionPanel";
+import { attachInlineGhost } from "./components/inline-ghost";
 import { BUILD, VERSION } from "./constants";
 import { diagLog } from "./diag";
 import { logger } from "./logging";
@@ -259,16 +260,20 @@ Promise.defer(async () => {
     if (!focusedElem) return;
     if (!(focusedElem instanceof HTMLElement)) return;
 
-    const pos = getCaretCoordinate();
-    if (!pos) return;
+    // Display. The inline ghost inserts the completion into the flow, so the
+    // paragraph reflows around it and nothing is ever hidden; the suggestion
+    // panel paints over the prose and is the older behaviour.
+    const inlineGhost = settings.useInlineCompletionTextInPreview;
+    if (!inlineGhost && !getCaretCoordinate()) return;
 
-    // Insert a suggestion panel below the cursor
-    const unattachSuggestionPanel = attachSuggestionPanel(displayText, mode, {
-      backgroundColor,
-      fontSize,
-    });
+    // Assigned below, once `cleanup` exists, so a dismissed ghost rejects the
+    // completion through exactly the same path as a caret move.
+    let detachPreview: () => void = () => {};
 
     const insertCompletionText = () => {
+      // Detach the preview first: the ghost sits at the caret, so inserting the
+      // real text with it still in place would nest one inside the other.
+      detachPreview();
       try {
         // Check whether it is safe to just use `insertText` to insert completion text,
         // as using `reloadContent` uses much more resources and causes a flicker
@@ -314,10 +319,21 @@ Promise.defer(async () => {
 
     const cleanup = new Observable<"accepted" | "rejected">();
     cleanup.subscribeOnce(() => {
-      unattachSuggestionPanel();
+      detachPreview();
       editor.writingArea.removeEventListener("keydown", keydownHandler, true);
       $(editor.writingArea).off("caretMove", caretMoveHandler);
     });
+
+    if (inlineGhost) {
+      detachPreview = attachInlineGhost(displayText, {
+        onDismiss: () => cleanup.next("rejected"),
+      });
+    } else {
+      detachPreview = attachSuggestionPanel(displayText, mode, {
+        backgroundColor,
+        fontSize,
+      });
+    }
 
     /**
      * Intercept `Tab` key once and change it to accept completion.

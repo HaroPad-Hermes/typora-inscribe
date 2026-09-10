@@ -199,6 +199,7 @@
     "output-limit": "Max sentences (0 = none)",
     "fim-fallback": "FIM short-fill fallback",
     "inline-source": "Inline ghost in source mode",
+    "inline-preview": "Inline ghost in live preview (Beta)",
     "save": "Save",
     "cancel": "Cancel",
     "trigger-hotkey": "Trigger hotkey"

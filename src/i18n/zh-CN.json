@@ -210,6 +210,7 @@
     "output-limit": "最大句数（0 = 不限）",
     "fim-fallback": "FIM 短填充回退",
     "inline-source": "源码模式内联提示",
+    "inline-preview": "预览模式内联提示 (Beta)",
     "save": "保存",
     "cancel": "取消",
     "trigger-hotkey": "手动触发快捷键"

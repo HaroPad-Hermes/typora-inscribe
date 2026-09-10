@@ -28,6 +28,9 @@ const SettingsPanel: FC<SettingsPanelProps> = ({ onClose }) => {
   const [useInlineInSource, setUseInlineInSource] = useState(
     settings.useInlineCompletionTextInSource,
   );
+  const [useInlineInPreview, setUseInlineInPreview] = useState(
+    settings.useInlineCompletionTextInPreview,
+  );
 
   const save = () => {
     settings.baseUrl = baseUrl.trim() || "https://api.deepseek.com/v1";
@@ -42,6 +45,7 @@ const SettingsPanel: FC<SettingsPanelProps> = ({ onClose }) => {
     settings.fimShortFillFallback = fimShortFillFallback;
     settings.triggerHotkey = triggerHotkey.trim().toLowerCase();
     settings.useInlineCompletionTextInSource = useInlineInSource;
+    settings.useInlineCompletionTextInPreview = useInlineInPreview;
     onClose();
   };
 
@@ -118,6 +122,17 @@ const SettingsPanel: FC<SettingsPanelProps> = ({ onClose }) => {
             <div style={{ ...fieldStyle, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
               <label style={labelStyle}>{t("settings.inline-source")}</label>
               <Switch value={useInlineInSource} onChange={setUseInlineInSource} />
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}>
+              <label style={labelStyle}>{t("settings.inline-preview")}</label>
+              <Switch value={useInlineInPreview} onChange={setUseInlineInPreview} />
             </div>
 
             <div style={fieldStyle}>

@@ -9,6 +9,9 @@ const defaultSettings = {
   /* General */
   disableCompletions: false,
   useInlineCompletionTextInSource: true,
+  // Live preview: render the completion inline at the caret as ghost text
+  // (paragraph reflows around it) instead of the out-of-document panel.
+  useInlineCompletionTextInPreview: true,
 
   /* OpenAI-compatible provider */
   baseUrl: "https://api.deepseek.com/v1",
