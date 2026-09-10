@@ -31,5 +31,5 @@ bundle output is `dist/index.js`, deployed to `resources\copilot\`.
   caused this twice. `md5sum dist/index.js` vs the installed `index.js`, and read
   the boot line to see which build actually ran.
 - **Never silently fall back to a stale caret.** See the floor in `CONSTRAINTS.md`.
-- `main.ts` is 1071 lines and untestable by construction. Put new logic in its
+- `main.ts` is 930 lines and untestable by construction. Put new logic in its
   own module with a spec; do not grow `main.ts`.
