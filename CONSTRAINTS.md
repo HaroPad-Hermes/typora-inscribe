@@ -52,7 +52,7 @@ are the only number an implementation can actually be held to.*
 | Suppression count | 25 across 12 files | must not rise |
 | Repo-wide lint errors | **190** (was 6044 — P0.4 removed the CRLF noise) | must not rise; burn-down is its own task on its own branch |
 | `src/main.ts` size | 1071 lines | must not grow — new completion logic goes in its own module |
-| `BUILD` marker == `git rev-parse --short HEAD` | **TRUE** — stamped at rollup time; verified across two builds (P0.1) | must stay true |
+| `BUILD` marker == the commit the bundle was built from | **TRUE** — stamped at rollup time; verified across two builds (P0.1). Rebuild and redeploy after any commit touching `src/` or `rollup.config.ts` — not for docs-only commits, which cannot change the bundle. | must stay true |
 | `dist/index.js` md5 == installed md5 | TRUE — re-verified after each deploy | must stay true |
 | `derived=null` at list items, on the test doc | 0 (last live run: 12/12 derivations) | must stay 0 — currently verified only by hand, automated in Phase 4 |
 | Dev-toolchain advisories | 29 (17 high, 3 critical) — **dev-only** | must not rise |
@@ -68,7 +68,7 @@ currently green.*
 
 | Gap | Evidence | Fix | Status |
 |-----|----------|-----|--------|
-| **CRLF breaks lint on every Windows checkout** | `core.autocrlf=true`, no `.gitattributes`, `prettier.config.cjs` sets no `endOfLine` (defaults to `lf`) → `npm run lint` → **6044 errors**, nearly all `Delete ␍`. | `.gitattributes` with `* text=auto eol=lf` + `core.autocrlf=false` + forced re-checkout | **DONE — P0.4.** 6044 → 190; the remaining 190 are unrelated to EOL |
+| **CRLF breaks lint on every Windows checkout** | `core.autocrlf=true`, no `.gitattributes`, `prettier.config.cjs` sets no `endOfLine` (defaults to `lf`) → `npm run lint` → **6044 errors**, nearly all `Delete ␍`. | `.gitattributes` with `* text=auto eol=lf` + `core.autocrlf=false` + forced re-checkout. **Commit before running it** — the re-checkout is `git rm --cached -r . && git reset --hard`, which silently discards uncommitted edits (it ate an edit of this very file). | **DONE — P0.4.** 6044 → 190; the remaining 190 are unrelated to EOL |
 | **CI has never executed** | `gh api repos/HaroPad-Hermes/typora-inscribe/actions/runs --jq .total_count` → **0**, while `actions/permissions` reports `enabled: true`. The workflow file exists and has never once run, so every "Runs at: CI" gate in this file was aspirational. | Either confirm the workflow triggers on a real push, or drop "CI" as a stage and run those checks locally | open — P0.5 |
 | **`typroof` fails locally** | `npm run test-types` → `Error: Cannot find module symbol for ".../typroof/assertions/assert.d.ts"`. typroof 0.6.0 declares Node ≥20 and this is Node v24.13.0, so it is a typroof/TypeScript-5.9 incompatibility, not a Node gate; the file it chokes on is LF, so it is not the CRLF issue either. | Pin the TypeScript version typroof expects, or record a real exception. It cannot be parked in CI — see the row above. | open — P0.5 |
 
