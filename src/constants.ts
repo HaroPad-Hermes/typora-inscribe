@@ -7,7 +7,8 @@ import { setGlobalVar } from "./utils/tools";
  * Plugin version.
  */
 export const VERSION = "0.1.0";
-export const BUILD = "c0b2817";
+/** Short git SHA this bundle was built from — replaced at rollup time. */
+export const BUILD = "__BUILD_SHA__";
 
 /**
  * Inscribe plugin directory.

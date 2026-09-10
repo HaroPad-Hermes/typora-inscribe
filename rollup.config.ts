@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -8,6 +9,27 @@ import typescript from "@rollup/plugin-typescript";
 import type { InputPluginOption } from "rollup";
 import { defineConfig } from "rollup";
 import postcss from "rollup-plugin-postcss";
+
+/**
+ * Short git SHA of the commit this bundle was built from.
+ *
+ * Stamped into the bundle so the runtime boot marker names the exact build that
+ * ran. Without it the marker is frozen, every deploy looks identical, and the
+ * anti-stale-deploy check it exists for is dead (see CONSTRAINTS.md, P0.1).
+ */
+function gitShortSha(): string {
+  try {
+    return execSync("git rev-parse --short HEAD", {
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .toString()
+      .trim();
+  } catch {
+    return "unknown";
+  }
+}
+
+const BUILD_SHA = gitShortSha();
 
 const plugins = [
   typescript({
@@ -25,6 +47,10 @@ const plugins = [
         .replace(/\n?^\s*\/\/ @ts-.+$/gm, "")
         .replace(/\n?^\s*\/\/\/ <reference.+$/gm, "")
         .replace(/\n?^\s*(\/\/|\/\*) eslint-disable.+$/gm, ""),
+  },
+  {
+    name: "build-stamp",
+    transform: (code) => code.replace(/__BUILD_SHA__/g, BUILD_SHA),
   },
   {
     name: "highlight.js-theme-switcher",
