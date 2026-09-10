@@ -50,8 +50,13 @@ project is the **live FIM API contract**, listed below.
   `prompt` collapses the output to `"*"`; the chat path (which can carry it)
   returns an empty completion 18/18 at an end-of-line prompt; and window size is
   not the cause (4/16 repetition cases at 2 lines, 7/16 at 8, 2/15 at 16).
-  `frequency_penalty` / `presence_penalty` ARE accepted by the endpoint but their
-  effect is unproven — see `~/workspace/fim-penalty-probe/`.*
+  `frequency_penalty` / `presence_penalty` are accepted by the endpoint but
+  measurably DO NOT reduce repetition: 450 interleaved calls at 150 trials/arm
+  gave 44/150 at baseline, 53/150 at fp=0.3, 42/150 at fp=0.8 (Fisher p = 0.32
+  and 0.90, pooled p = 0.74 / 0.49), and the design was powered to detect a
+  >=15 pp shift while the penalty produced <=6 pp, in the wrong direction for
+  0.3. Do not add a penalty to `generateFimOnce` — that avenue is closed by
+  measurement, so this guard is the ONLY protection on the FIM path.*
 
 ## Enforced with numbers
 
