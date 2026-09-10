@@ -74,6 +74,7 @@ export default class CompletionService {
     const suffixText = "";
 
     const ghost = await computeGhost(preCursorText, systemPrompt, {
+      log: (m: string) => diagLog(m),
       continueText: async (p, raw) => {
         // FIM path: preferred ALWAYS (empty suffix = prefix completion). It
         // completes mid-word reliably and signals the boundary via leading

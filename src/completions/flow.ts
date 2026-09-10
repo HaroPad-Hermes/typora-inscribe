@@ -51,6 +51,35 @@ export function isIncompleteFill(fill: string): boolean {
   return false;
 }
 
+// --- Echo guard ---
+// FIM models sometimes re-emit text that already sits immediately before the
+// caret instead of continuing it, especially when the prompt ends on a
+// paragraph boundary. COMPLETION_CONSTRAINTS forbids this in the prompt; this
+// enforces it in code, the same way spacing is decided here rather than taken
+// from the model's raw output. Without it the user is shown a "suggestion"
+// that merely repeats a line they have already written.
+
+/**
+ * Minimum repeated span (in characters) before a ghost counts as an echo.
+ * Below this, a short overlap is more likely coincidence than duplication.
+ */
+export const ECHO_MIN_SPAN = 12;
+
+/**
+ * True when `ghost` is wholly contained in the text just before the caret.
+ *
+ * @param ghost - The candidate completion text.
+ * @param prefix - The window of preceding text that was sent as the prompt.
+ * @param minSpan - Minimum repeated span before it counts as an echo.
+ * @returns Whether the ghost merely re-emits text already in the prompt.
+ */
+export function echoesPrefix(ghost: string, prefix: string, minSpan = ECHO_MIN_SPAN): boolean {
+  const norm = (s: string): string => s.replace(/\s+/g, " ").trim().toLowerCase();
+  const g = norm(ghost);
+  if (g.length < minSpan) return false;
+  return norm(prefix).includes(g);
+}
+
 // --- System prompt for the spacing arbiter ---
 export const WORD_VALIDITY_SYSTEM =
   'You check if a word is a plausible continuation of a text.\n' +
@@ -120,6 +149,8 @@ export interface GhostCallbacks {
   /** Called with the continuation prompt plus the raw windowed prefix.
    *  Returns the raw continuation text, or null if aborted/cursor moved. */
   continueText: (prompt: string, raw?: string) => Promise<string | null>;
+  /** Optional diagnostics sink, so a rejected ghost is not a silent failure. */
+  log?: (message: string) => void;
 }
 
 export interface GhostOptions {
@@ -151,6 +182,10 @@ export async function computeGhost(
     if (sentence === null) return null;
     const result = clean(sentence);
     if (!result || isStuckMarker(result)) return null;
+    if (echoesPrefix(result, windowed)) {
+      cb.log?.(`ghost rejected as echo of preceding text: ${JSON.stringify(result.slice(0, 60))}`);
+      return null;
+    }
     return result;
   }
 
@@ -164,6 +199,10 @@ export async function computeGhost(
 
   const cleaned = clean(sentence);
   if (!cleaned || isStuckMarker(cleaned)) return null;
+  if (echoesPrefix(cleaned, windowed)) {
+    cb.log?.(`ghost rejected as echo of preceding text: ${JSON.stringify(cleaned.slice(0, 60))}`);
+    return null;
+  }
 
   // Code-decided spacing: exactly one leading space when the model signaled
   // a word boundary, none when it completed the current word.

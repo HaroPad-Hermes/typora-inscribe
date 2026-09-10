@@ -57,7 +57,7 @@ export const attachSuggestionPanel = (
         { x: options.cm.cursorCoords().left, y: options.cm.cursorCoords().top }
       : getCaretCoordinate();
     if (!pos) return;
-    $(".suggestion-panel").css("top", `calc(${pos.y}px + 1.5em)`);
+    $(".suggestion-panel").css("top", `${pos.y}px`);
   };
   if (options?.cm) options.cm.on("scroll", scrollListener);
   $("content").on("scroll", scrollListener);
@@ -143,7 +143,10 @@ const SuggestionPanel: FC<SuggestionPanelProps> = ({
         // and then set to visible
         visibility: "hidden",
         left: 0,
-        top: `calc(${y}px + 1.5em)`,
+        // Sit AT the caret, not 1.5em below it: the ghost then occupies the same
+        // place the accepted text will, so it reads as ghost text instead of a
+        // card covering the following line.
+        top: `${y}px`,
         maxWidth: `min(80ch, max(40ch, ${maxAvailableWidth}px))`,
         backgroundColor: window.getComputedStyle(document.body).backgroundColor,
         color: window.getComputedStyle(document.body).color,
@@ -152,11 +155,13 @@ const SuggestionPanel: FC<SuggestionPanelProps> = ({
       <div
         style={{
           color: textColor,
-          marginTop: "0.25em",
+          marginTop: "0.1em",
           marginLeft: "0.25em",
           display: "flex",
           flexDirection: "row",
           alignItems: "center",
+          fontSize: "0.75em",
+          opacity: 0.7,
         }}>
         <span
           style={{

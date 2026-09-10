@@ -1,12 +1,18 @@
+/* The suggestion is rendered as an out-of-document overlay on purpose: Typora
+   exposes no `md-ignore`-style class, so injecting a ghost node into the
+   contenteditable risks it being serialised into the user's markdown on save.
+   The cost of that choice is that this element must be made to READ as part of
+   the document — no border, no shadow, no radius, no padding — and it must sit
+   AT the caret rather than over the line below it. The earlier bordered card
+   with a drop shadow floated over the prose and hid whatever was under it,
+   which is what made completions look like broken formatting rather than ghost
+   text. */
 .suggestion-panel {
-  position: absolute;
+  position: fixed; /* getCaretCoordinate() returns viewport coordinates */
   z-index: 9999;
   pointer-events: none;
   white-space: pre-wrap;
-  border: 1px solid #ccc;
   display: flex;
   flex-direction: column;
-  padding: 0.5em;
-  border-radius: 5px;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 50%);
+  padding: 0;
 }
