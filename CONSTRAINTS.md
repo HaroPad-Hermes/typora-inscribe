@@ -18,11 +18,14 @@ project is the **live FIM API contract**, listed below.
 - No skipped or deleted tests without the reason in the commit message.
 - No secrets in source. The API key lives in Chromium localStorage, never in
   the repo.
-- **No silent failure on the completion path.** A caret-derivation failure must
-  produce a visible `✦ no suggestion`, never a quiet fall-through to a stale
-  caret. *Reason: every "the completions are nonsense" report traced back to a
-  stale-caret completion that looked coherent — the failure was invisible, so it
-  was misdiagnosed as a model problem for three sessions.*
+- **No silent failure on the completion path.** Every block the editor renders —
+  paragraph, heading, list item, **code fence** — must be mappable by the caret
+  derivation. A block that cannot be mapped must log `block NO-MATCH` naming its
+  tag, and a trigger must not reuse a caret the derivation rejected without
+  saying so. *Reason: every "the completions are nonsense" report traced back to
+  a stale-caret completion that looked coherent. A fenced block could not map,
+  the trigger fell through to a stale tracker, and the failure was invisible — so
+  it was misdiagnosed as a model problem for three sessions. Fixed in P0.3.*
 - This file does not get weakened to make a change pass.
 
 ## Enforced with numbers
@@ -46,15 +49,15 @@ are the only number an implementation can actually be held to.*
 
 | Metric | Today | Direction |
 |--------|-------|-----------|
-| Project statement coverage | 35.26 % | must not fall |
-| Project line coverage | 38.27 % | must not fall |
-| **Completion-path coverage** | **0 %** — `main.ts`, `completions/*`, `providers/*`, `typora-utils.ts` are never imported by a test | must rise (Phase 1) |
+| Project statement coverage | 43.88 % (was 35.26 % before P1.1) | must not fall |
+| Project line coverage | 46.51 % (was 38.27 %) | must not fall |
+| **Completion-path coverage** | `completions/caret.ts` **76.99 % lines / 100 % funcs** — was 0 %. `main.ts`, `providers/*`, `typora-utils.ts` still 0 % | must rise |
 | Suppression count | 25 across 12 files | must not rise |
 | Repo-wide lint errors | **190** (was 6044 — P0.4 removed the CRLF noise) | must not rise; burn-down is its own task on its own branch |
-| `src/main.ts` size | 1071 lines | must not grow — new completion logic goes in its own module |
+| `src/main.ts` size | **915** lines (was 1071 — P1.1 moved 156 lines to `completions/caret.ts`) | must not grow — new completion logic goes in its own module |
 | `BUILD` marker == the commit the bundle was built from | **TRUE** — stamped at rollup time; verified across two builds (P0.1). Rebuild and redeploy after any commit touching `src/` or `rollup.config.ts` — not for docs-only commits, which cannot change the bundle. | must stay true |
 | `dist/index.js` md5 == installed md5 | TRUE — re-verified after each deploy | must stay true |
-| `derived=null` at list items, on the test doc | 0 (last live run: 12/12 derivations) | must stay 0 — currently verified only by hand, automated in Phase 4 |
+| `derived=null` on the test doc | 0 at list items (last live run 12/12); **code fences now map too** (P0.3, unit-covered) | must stay 0 — live run still hand-verified until Phase 4 |
 | Dev-toolchain advisories | 29 (17 high, 3 critical) — **dev-only** | must not rise |
 
 *The split matters. All 29 advisories live in build tooling (vite via vitest,

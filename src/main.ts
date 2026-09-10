@@ -3,6 +3,7 @@ import { debounce } from "radash";
 
 import { ChatSession } from "./client/chat";
 import { attachChatToggle } from "./chat-toggle";
+import { deriveCaretFromDomSelection } from "./completions/caret";
 import CompletionService from "./completions/service";
 import { attachSuggestionPanel } from "./components/SuggestionPanel";
 import { BUILD, VERSION } from "./constants";
@@ -617,172 +618,9 @@ Promise.defer(async () => {
     return md.slice(Math.max(0, off - 15), off) + "␂" + md.slice(off, off + 15);
   };
 
-  /* Derive the caret directly from the live DOM selection at trigger time.
-   * Walks the top-level blocks of the editor (flattening list items), matches
-   * each block's rendered text to its markdown line SEQUENTIALLY, and computes
-   * the caret's {line, character} exactly — including `- ` bullets, heading
-   * markers, and block newlines that the naive text-node TreeWalker missed.
-   * Falls back to tracked when matching fails (code blocks, tables, wrapped
-   * paragraphs). */
-  const deriveCaretFromDomSelection = (markdown: string): Position | null => {
-    const trace = (msg: string) => diagLog(`deriveCaret TRACE: ${msg}`);
-    try {
-      const sel = window.getSelection();
-      if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) {
-        trace(`selection bad: sel=${!!sel} rangeCount=${sel?.rangeCount ?? -1} collapsed=${sel?.isCollapsed}`);
-        return null;
-      }
-      const anchor = sel.anchorNode;
-      if (!anchor || !editor.writingArea.contains(anchor)) {
-        trace(`anchor outside writingArea: ${anchor ? `${anchor.nodeName}#${(anchor as Element).className}` : "null"}`);
-        return null;
-      }
-      const elem = anchor.nodeType === Node.TEXT_NODE ? anchor.parentElement : (anchor as Element);
-      if (!elem || elem.closest(".CodeMirror") || elem.closest("input") || elem.classList?.contains("ty-input")) {
-        trace(`elem rejected: ${elem ? `${elem.tagName}.${(elem as Element).className}` : "null"}`);
-        return null;
-      }
-      trace(`anchor=${anchor.nodeName} offset=${sel.anchorOffset} elem=${elem.tagName}.${elem.className}`);
-
-      const norm = markdown.replace(/\r\n/g, "\n");
-      const lines = norm.split("\n");
-
-      // Find the caret's block: walk up to the top-level block (direct child
-      // of #write), or the closest list item / mdtype element.
-      let caretBlock: Element | null = elem;
-      while (caretBlock && caretBlock.parentElement && caretBlock.parentElement !== editor.writingArea) {
-        if (caretBlock.tagName === "LI" || caretBlock.classList.contains("md-list-item")) break;
-        caretBlock = caretBlock.parentElement;
-      }
-      if (!caretBlock || caretBlock === editor.writingArea)
-        caretBlock = elem.closest("li, [mdtype]") || elem;
-      if (!caretBlock || caretBlock === editor.writingArea) {
-        trace(`no caretBlock: ${caretBlock ? `${caretBlock.tagName}` : "null"}`);
-        return null;
-      }
-      trace(`caretBlock=${caretBlock.tagName}.${caretBlock.className}`);
-
-      const caretBlockText = (caretBlock.textContent ?? "").replace(/\s+/g, " ").trim();
-      if (!caretBlockText) {
-        trace(`caretBlockText empty`);
-        return null;
-      }
-      trace(`caretBlockText="${caretBlockText.slice(0, 60)}"`);
-
-      // Sequential matching: walk top-level blocks, matching each to the next
-      // markdown line. Handles repeated lines and multi-line blocks.
-      let mdLineIdx = 0;
-      const matchBlockToLine = (blockText: string, fromIdx: number): number => {
-        for (let i = fromIdx; i < lines.length; i++) {
-          const stripped = lines[i]!
-            .replace(/^[-*+]\s+/, "") // "- ", "* ", "+ "
-            .replace(/^\d+[.)]\s+/, "") // "1. ", "2) "
-            .replace(/^#{1,6}\s+/, "") // "## "
-            .replace(/^>\s?/, "") // "> "
-            .replace(/^```.*$/, "") // code fence markers
-            .replace(/\s+/g, " ").trim();
-          if (stripped === blockText) return i;
-        }
-        return -1;
-      };
-
-      const forEachTopBlock = (
-        root: Element,
-        fn: (el: Element, isCaret: boolean) => boolean | void,
-      ): boolean => {
-        for (const child of root.children) {
-          if (child.nodeType !== Node.ELEMENT_NODE) continue;
-          if (child.tagName === "UL" || child.tagName === "OL") {
-            for (const li of child.children) {
-              if (li.nodeType !== Node.ELEMENT_NODE) continue;
-              const stop = fn(li as Element, li === caretBlock || li.contains(caretBlock));
-              if (stop) return true;
-            }
-          } else {
-            const stop = fn(child as Element, child === caretBlock || child.contains(caretBlock));
-            if (stop) return true;
-          }
-        }
-        return false;
-      };
-
-      let result: Position | null = null;
-      trace(
-        `writingArea children: ${Array.from(editor.writingArea.children)
-          .map((c) => c.tagName)
-          .join(",")}`,
-      );
-      forEachTopBlock(editor.writingArea, (el, isCaret) => {
-        const blockText = (el.textContent ?? "").replace(/\s+/g, " ").trim();
-        const matched = matchBlockToLine(blockText, mdLineIdx);
-        if (matched < 0) {
-          trace(`block NO-MATCH isCaret=${isCaret} tag=${el.tagName} "${blockText.slice(0, 50)}" mdLineIdx=${mdLineIdx}`);
-          return false; // skip unmatched (code/table)
-        }
-        trace(`block matched isCaret=${isCaret} tag=${el.tagName} line=${matched} "${blockText.slice(0, 50)}"`);
-        if (isCaret) {
-          // Compute intra-block offset, handling both text-node anchors
-          // (common in mid-paragraph) and element anchors (common when
-          // clicking at the end of a line, where the browser sets
-          // anchorNode to the block element with anchorOffset = child count).
-          const intraOffset = ((): number => {
-            if (anchor.nodeType === Node.TEXT_NODE) {
-              const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
-              let acc = 0;
-              for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-                if (n === anchor) return acc + sel.anchorOffset;
-                acc += n.textContent?.length ?? 0;
-              }
-              return -1;
-            }
-            // Element anchor: caret at node boundary in `anchor`.
-            // Walk the block's flattened nodes, accumulating text before
-            // the boundary inside `anchor`.
-            const collectBefore = (node: Node, target: Node, off: number): boolean => {
-              if (node === target) {
-                for (let i = 0; i < off; i++)
-                  acc += (target.childNodes[i]?.textContent ?? "").length;
-                return true;
-              }
-              if (node.nodeType === Node.TEXT_NODE) {
-                acc += node.textContent?.length ?? 0;
-                return false;
-              }
-              for (const ch of node.childNodes)
-                if (collectBefore(ch, target, off)) return true;
-              return false;
-            };
-            let acc = 0;
-            if (!collectBefore(el, anchor, sel.anchorOffset)) return -1;
-            return acc;
-          })();
-          if (intraOffset < 0) {
-            trace(`intraOffset FAILED anchor=${anchor.nodeName} offset=${sel.anchorOffset}`);
-            return false;
-          }
-          const raw = lines[matched]!;
-          const bulletLen = (raw.match(/^([-*+]\s+|\d+[.)]\s+|#{1,6}\s+|>\s?)/)?.[1] ?? "").length;
-          result = { line: matched, character: bulletLen + intraOffset };
-          trace(`RESULT line=${matched} char=${bulletLen + intraOffset} (bulletLen=${bulletLen} intra=${intraOffset})`);
-          return true;
-        }
-        // Preceding block: advance past its line. Blank lines between blocks
-        // are skipped by the forward search. Do NOT try to count how many
-        // lines a block spans — a UL's textContent is all its items
-        // concatenated (never matching a single markdown line), so the old
-        // heuristic ran to the end of the document and desynced every
-        // subsequent list-item match (breaks all triggers after a list).
-        mdLineIdx = matched + 1;
-        return false;
-      });
-
-      return result;
-    } catch (e) {
-      diagLog(`deriveCaret EXCEPTION: ${String(e)}`);
-      return null;
-    }
-  };
-
+  /* The caret derivation lives in ./completions/caret so it can be unit-tested
+   * without Typora. main.ts is untestable by construction and must not grow
+   * (see CONSTRAINTS.md). */
   const doTrigger = (manual = false): void => {
     if (settings.disableCompletions) return;
     if (!settings.apiKey) {
@@ -799,7 +637,12 @@ Promise.defer(async () => {
      * derivation reads the live selection and accounts for list bullets,
      * heading markers and block newlines exactly. */
     const tracked = state.caretPosition;
-    const derived = deriveCaretFromDomSelection(state.markdown);
+    const derived = deriveCaretFromDomSelection({
+      writingArea: editor.writingArea,
+      selection: window.getSelection(),
+      markdown: state.markdown,
+      log: diagLog,
+    });
     const caretPosition = derived ?? tracked;
     diagLog(
       `trigger${manual ? " (manual)" : ""} caret=${JSON.stringify(caretPosition)} source=${derived ? "dom" : "tracked"} ` +
