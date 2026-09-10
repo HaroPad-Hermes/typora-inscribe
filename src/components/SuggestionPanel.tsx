@@ -151,7 +151,10 @@ const SuggestionPanel: FC<SuggestionPanelProps> = ({
         backgroundColor: window.getComputedStyle(document.body).backgroundColor,
         color: window.getComputedStyle(document.body).color,
       }}>
-      <textarea ref={codeAreaRef} style={{ padding: 0 }} value={text} />
+      {/* Faint, so the preview is unmistakably a preview rather than text the
+          user already wrote — the panel keeps an opaque background (out-of-doc
+          overlay), so dimming the text is what distinguishes it. */}
+      <textarea ref={codeAreaRef} style={{ padding: 0, opacity: 0.5 }} value={text} />
       <div
         style={{
           color: textColor,
