@@ -27,6 +27,19 @@ project is the **live FIM API contract**, listed below.
   the trigger fell through to a stale tracker, and the failure was invisible — so
   it was misdiagnosed as a model problem for three sessions. Fixed in P0.3.*
 - This file does not get weakened to make a change pass.
+- **A completion preview must not occlude the document.** The preview is an
+  out-of-document overlay (Typora exposes no `md-ignore` class, so injecting a
+  ghost node into the contenteditable risks it being serialised into the user's
+  markdown on save), which makes it the only element on screen that can hide
+  their prose. It must read as ghost text: no border, shadow, radius or padding;
+  `position: fixed` (the coordinates come from `getBoundingClientRect()`);
+  anchored AT the caret, not on the line below it; and dimmed so it is visibly a
+  preview. *Reason: an opaque bordered card was reported by the user as "weird
+  formatting" and it hid whatever sat beneath it.*
+- **A ghost that merely repeats text already before the caret is rejected in
+  code.** `COMPLETION_CONSTRAINTS` asks the model not to re-emit earlier
+  sentences, and `echoesPrefix` enforces it, so an echo shows nothing rather
+  than a "suggestion" the user has already written. The rejection is logged.
 
 ## Enforced with numbers
 
@@ -49,11 +62,11 @@ are the only number an implementation can actually be held to.*
 
 | Metric | Today | Direction |
 |--------|-------|-----------|
-| Project statement coverage | 43.88 % (was 35.26 % before P1.1) | must not fall |
-| Project line coverage | 46.51 % (was 38.27 %) | must not fall |
-| **Completion-path coverage** | `completions/caret.ts` **76.99 % lines / 100 % funcs** — was 0 %. `main.ts`, `providers/*`, `typora-utils.ts` still 0 % | must rise |
+| Project statement coverage | 46.61 % (was 43.88 %; 35.26 % before P1.1) | must not fall |
+| Project line coverage | 49.32 % (was 46.51 %; 38.27 % before P1.1) | must not fall |
+| **Completion-path coverage** | `completions/caret.ts` **76.99 % lines / 100 % funcs**; `completions/flow.ts` **73.01 % lines** — both were 0 %. `main.ts`, `providers/*`, `typora-utils.ts` still 0 % | must rise |
 | Suppression count | 25 across 12 files | must not rise |
-| Repo-wide lint errors | **190** (was 6044 — P0.4 removed the CRLF noise) | must not rise; burn-down is its own task on its own branch |
+| Repo-wide lint errors | **161** (was 6044 — P0.4 removed the CRLF noise; 190 → 161 as P1.1 moved code out of `main.ts`) | must not rise; burn-down is its own task on its own branch |
 | `src/main.ts` size | **915** lines (was 1071 — P1.1 moved 156 lines to `completions/caret.ts`) | must not grow — new completion logic goes in its own module |
 | `BUILD` marker == the commit the bundle was built from | **TRUE** — stamped at rollup time; verified across two builds (P0.1). Rebuild and redeploy after any commit touching `src/` or `rollup.config.ts` — not for docs-only commits, which cannot change the bundle. | must stay true |
 | `dist/index.js` md5 == installed md5 | TRUE — re-verified after each deploy | must stay true |
