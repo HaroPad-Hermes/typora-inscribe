@@ -60,6 +60,17 @@ describe("attachSelectionMenu (real event sequences)", () => {
     expect(onRun).toHaveBeenCalledWith("make it shorter", false);
   });
 
+  it("brings the stand-in up on a real click into the field", async () => {
+    const domRange = {
+      getClientRects: () => [{ height: 18, left: 10, top: 20, width: 100 }],
+    } as unknown as Range;
+    attachSelectionMenu({ selection: SELECTION, presets: PRESETS, onRun: vi.fn(), domRange });
+    const user = userEvent.setup();
+    expect(document.querySelector(".inscribe-selection-mirror")).toBeNull();
+    await user.click(bar()!.querySelector<HTMLInputElement>(`.${SELECTION_MENU_CLASS}-input`)!);
+    expect(document.querySelector(".inscribe-selection-mirror")).not.toBeNull();
+  });
+
   it("dismisses on a real click outside, and not on one inside", async () => {
     attachSelectionMenu({ selection: SELECTION, presets: PRESETS, onRun: vi.fn() });
     const user = userEvent.setup();

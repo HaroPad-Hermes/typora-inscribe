@@ -138,6 +138,33 @@ describe("attachSelectionMenu", () => {
     expect(bar()).toBeNull();
   });
 
+  it("draws nothing over the selection until something takes focus", () => {
+    // The native highlight is still on screen while the bar opens; a second
+    // overlay on top of it is just noise.
+    const domRange = {
+      getClientRects: () => [{ height: 18, left: 10, top: 20, width: 100 }],
+    } as unknown as Range;
+    attach({ domRange });
+    expect(document.querySelector(".inscribe-selection-mirror")).toBeNull();
+
+    const input = bar()!.querySelector<HTMLInputElement>(`.${SELECTION_MENU_CLASS}-input`)!;
+    input.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(document.querySelector(".inscribe-selection-mirror")).not.toBeNull();
+  });
+
+  it("takes the stand-in away with the bar", () => {
+    const domRange = {
+      getClientRects: () => [{ height: 18, left: 10, top: 20, width: 100 }],
+    } as unknown as Range;
+    const { remove: removeBar } = attach({ domRange });
+    bar()!
+      .querySelector<HTMLInputElement>(`.${SELECTION_MENU_CLASS}-input`)!
+      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(document.querySelector(".inscribe-selection-mirror")).not.toBeNull();
+    removeBar!.remove();
+    expect(document.querySelector(".inscribe-selection-mirror")).toBeNull();
+  });
+
   it("refuses an anchor with no measurable rect rather than pinning to a corner", () => {
     const remove = attachSelectionMenu({
       selection: { ...SELECTION, rect: { left: 0, top: 0, width: 0, height: 0 } },

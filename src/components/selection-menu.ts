@@ -87,9 +87,14 @@ export function attachSelectionMenu(options: SelectionMenuOptions): SelectionMen
   // action can read it.
   menu.addEventListener("mousedown", (event) => event.preventDefault());
 
-  // The selection is gone the moment anything else takes focus; this keeps it
-  // visible so "what is being replaced" stays answerable.
-  const mirror = domRange ? attachSelectionMirror(domRange, doc) : null;
+  // Drawn ONLY once something takes focus away from the document — in practice
+  // the field, which is the moment the browser's own highlight dies. Drawing it
+  // at open time put a second overlay on top of the live native selection, which
+  // is distracting and says nothing the highlight did not already say.
+  let mirror: (() => void) | null = null;
+  const showMirror = (): void => {
+    if (!mirror && domRange) mirror = attachSelectionMirror(domRange, doc);
+  };
 
   let live = true;
   let busy = false;
@@ -144,7 +149,13 @@ export function attachSelectionMenu(options: SelectionMenuOptions): SelectionMen
   input.type = "text";
   input.className = `${SELECTION_MENU_CLASS}-input`;
   input.placeholder = "Ask AI anything…";
-  input.addEventListener("mousedown", (event) => event.stopPropagation());
+  input.addEventListener("mousedown", (event) => {
+    event.stopPropagation();
+    // mousedown precedes focus, so the stand-in is up before the highlight
+    // disappears rather than a frame after it.
+    showMirror();
+  });
+  input.addEventListener("focus", showMirror);
   input.addEventListener("keydown", (event) => {
     event.stopPropagation();
     if (event.key === "Enter" && input.value.trim()) run(input.value.trim());
