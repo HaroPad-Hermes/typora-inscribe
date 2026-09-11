@@ -21,6 +21,8 @@
  */
 
 /** Dim enough to read as a preview, bright enough to read. */
+import { PREVIEW_CLASS } from "../completions/preview-text";
+
 export const GHOST_OPACITY = "0.45";
 
 export interface InlineGhostOptions {
@@ -45,7 +47,7 @@ export const attachInlineGhost = (text: string, options: InlineGhostOptions = {}
   range.collapse(true);
 
   const ghost = document.createElement("span");
-  ghost.className = "inscribe-ghost";
+  ghost.className = PREVIEW_CLASS;
   // Keeps the caret out of the preview, so typing and accepting behave as
   // though it were not there.
   ghost.setAttribute("contenteditable", "false");

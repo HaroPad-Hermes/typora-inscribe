@@ -1,5 +1,6 @@
 import type { LspPosition as Position } from "../utils/tools";
 
+import { isInsidePreview, textWalkerWithoutPreview, textWithoutPreview } from "./preview-text";
 import { mapTableBlock } from "./table";
 
 /**
@@ -12,7 +13,6 @@ const STRUCTURAL_PREFIX = /^([-*+]\s+|\d+[.)]\s+|#{1,6}\s+|>\s?)/;
 
 const ELEMENT_NODE = 1;
 const TEXT_NODE = 3;
-const SHOW_TEXT = 4;
 
 export interface CaretDerivationOptions {
   /** The editor's `#write` container; top-level blocks are its direct children. */
@@ -113,6 +113,14 @@ export function deriveCaretFromDomSelection(options: CaretDerivationOptions): Po
         .replace(/\s+/g, " ")
         .trim();
 
+    /**
+     * Whitespace-insensitive form, for blocks that render without separators.
+     *
+     * @param s - Text to squash.
+     * @returns The text with all whitespace removed.
+     */
+    const squash = (s: string): string => s.replace(/\s+/g, "");
+
     // Sequential matching: walk top-level blocks, matching each to the next
     // markdown line. Handles repeated lines and multi-line blocks.
     let mdLineIdx = 0;
@@ -129,24 +137,39 @@ export function deriveCaretFromDomSelection(options: CaretDerivationOptions): Po
      * fixes that without the old trap of comparing a sibling's textContent (a
      * UL's textContent is all its items concatenated with no separator).
      *
+     * A fence caret still does not derive — its anchor is refused earlier when it
+     * lives in CodeMirror — so this closes the mapping gap, not the feature.
+     *
      * @param blockText - The block's rendered text, whitespace-collapsed.
      * @param fromIdx - Markdown line index to start searching from.
      * @returns The matched line range, or null when the block is unmapped.
      */
+    const matched = (firstLine: number, lineCount: number, approximate = false) => ({
+      approximate,
+      firstLine,
+      lineCount,
+    });
     const matchBlockLines = (
       blockText: string,
       fromIdx: number,
-    ): { firstLine: number; lineCount: number } | null => {
+    ): { approximate: boolean; firstLine: number; lineCount: number } | null => {
+      const squashedBlock = squash(blockText);
       for (let i = fromIdx; i < lines.length; i++) {
         // Skip fence markers and blank lines that precede the block's content.
         const head = stripLine(lines[i]!);
         if (head === "") continue;
-        if (head === blockText) return { firstLine: i, lineCount: 1 };
+        if (head === blockText) return matched(i, 1);
         let acc = head;
         for (let j = i + 1; j < lines.length; j++) {
           acc = `${acc} ${stripLine(lines[j]!)}`.replace(/\s+/g, " ").trim();
-          if (acc === blockText) return { firstLine: i, lineCount: j - i + 1 };
-          if (acc.length > blockText.length) break;
+          if (acc === blockText) return matched(i, j - i + 1);
+          // A rendered multi-line block joins its lines WITHOUT the space the markdown
+          // uses — a fence's indentation is CSS, not text — so the spaced accumulator
+          // can never equal the block text and the block was reported NO-MATCH. Retry
+          // whitespace-insensitively, but mark the match APPROXIMATE: squashing throws
+          // away line structure, so the block is located yet unmapped for offsets.
+          if (squash(acc) === squashedBlock) return matched(i, j - i + 1, true);
+          if (squash(acc).length > squashedBlock.length) break;
         }
       }
       return null;
@@ -208,7 +231,10 @@ export function deriveCaretFromDomSelection(options: CaretDerivationOptions): Po
         // this branch exists to remove.
         return isCaret;
       }
-      const blockText = el.textContent.replace(/\s+/g, " ").trim();
+      // Never read the plugin's own preview as document text: an undismissed ghost
+      // inside this block made it unmatchable and the caller fell back to a stale
+      // tracker (see completions/preview-text.ts).
+      const blockText = textWithoutPreview(el).replace(/\s+/g, " ").trim();
       const matched = matchBlockLines(blockText, mdLineIdx);
       if (!matched) {
         trace(
@@ -220,13 +246,22 @@ export function deriveCaretFromDomSelection(options: CaretDerivationOptions): Po
         `block matched isCaret=${String(isCaret)} tag=${el.tagName} line=${matched.firstLine} span=${matched.lineCount} "${blockText.slice(0, 50)}"`,
       );
       if (isCaret) {
+        // An approximate match means the DOM hid the block's separators (a fence's
+        // indentation and breaks are CSS), so the block's line structure is not
+        // recoverable and the offset cannot be computed exactly. Refuse: a confident
+        // wrong caret is worse than no suggestion, and is the failure this whole
+        // derivation exists to remove.
+        if (matched.approximate && !el.textContent.includes("\n")) {
+          trace(`block matched approximately — no rendered line separators, offset not derivable`);
+          return false;
+        }
         // Compute intra-block offset, handling both text-node anchors
         // (common in mid-paragraph) and element anchors (common when clicking
         // at the end of a line, where the browser sets anchorNode to the block
         // element with anchorOffset = child count).
         const intraOffset = ((): number => {
           if (anchor.nodeType === TEXT_NODE) {
-            const walker = doc.createTreeWalker(el, SHOW_TEXT, null);
+            const walker = textWalkerWithoutPreview(doc, el);
             let acc = 0;
             for (let n = walker.nextNode(); n; n = walker.nextNode()) {
               if (n === anchor) return acc + sel.anchorOffset;
@@ -246,7 +281,10 @@ export function deriveCaretFromDomSelection(options: CaretDerivationOptions): Po
               acc += node.textContent?.length ?? 0;
               return false;
             }
-            for (const ch of node.childNodes) if (collectBefore(ch, target, off)) return true;
+            for (const ch of node.childNodes) {
+              if (isInsidePreview(ch)) continue;
+              if (collectBefore(ch, target, off)) return true;
+            }
             return false;
           };
           if (!collectBefore(el, anchor, sel.anchorOffset)) return -1;
@@ -260,7 +298,7 @@ export function deriveCaretFromDomSelection(options: CaretDerivationOptions): Po
         // table). `intraOffset` counts characters through the block's rendered
         // text, so split it on newlines to get the line WITHIN the block and the
         // column, then offset from the markdown line the block starts on.
-        const blockRaw = el.textContent;
+        const blockRaw = textWithoutPreview(el);
         const before = blockRaw.slice(0, intraOffset);
         const lineWithinBlock = (before.match(/\n/g) ?? []).length;
         const lastNl = before.lastIndexOf("\n");
@@ -289,4 +327,27 @@ export function deriveCaretFromDomSelection(options: CaretDerivationOptions): Po
     log?.(`deriveCaret EXCEPTION: ${String(e)}`);
     return null;
   }
+}
+
+/**
+ * Validate a tracked caret against the markdown before trusting it.
+ *
+ * `derived ?? tracked` treats a refused derivation as "use the older value anyway".
+ * The tracker only learns a caret from markdown EDITS, so it goes stale after a
+ * caret move, and it overshoots by one at end-of-line (observed live: character 27
+ * for a 26-character line). A completion built for a position the document cannot
+ * hold is the historical "completions are nonsense" report, so the fallback now
+ * refuses what the document cannot contain: the trigger then reports no caret
+ * position and flashes, instead of spending a request on a position that is not
+ * real. It still logs `source=tracked`, so the fallback remains visible.
+ *
+ * @param tracked - The tracker's last known caret, or null.
+ * @param markdown - The document the position must be valid in.
+ * @returns The position when the document can hold it, otherwise null.
+ */
+export function validTrackedCaret(tracked: Position | null, markdown: string): Position | null {
+  if (!tracked) return null;
+  const line = markdown.split(/\r?\n/)[tracked.line];
+  if (line === undefined) return null;
+  return tracked.character > line.length ? null : tracked;
 }

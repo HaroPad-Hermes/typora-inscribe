@@ -3,13 +3,12 @@
 // with Obsidian editor deps removed: works on markdown text + caret position.
 // Spacing is decided by CODE (see completions/flow.ts), never the model.
 
-import {
-  buildSystemPromptFrom,
-  computeGhost,
-} from "./flow";
 import { diagLog } from "../diag";
 import type { ChatMessage, GenerateOnceOptions, Provider } from "../providers/provider";
 import { type Settings } from "../settings";
+
+import { buildSystemPromptFrom, computeGhost } from "./flow";
+import { describeStructuralRefusal, structuralVerdict } from "./structure";
 export interface CompletionResult {
   /** Full text to insert at the caret (may start with a space). */
   text: string;
@@ -115,6 +114,15 @@ export default class CompletionService {
     });
 
     if (ghost === null) return null;
+    // A completion is inserted at the caret, and some block types cannot hold every
+    // string: a newline inside a table cell is a new ROW (accepting one merged two
+    // cells and the text was gone), and a heading is a single line. Refusing shows a
+    // no-suggestion, which is visible — a silent bad insert is not.
+    const verdict = structuralVerdict(preCursorText, req.postCursorText, ghost);
+    if (!verdict.ok) {
+      diagLog(describeStructuralRefusal(verdict.reason));
+      return null;
+    }
     return { text: ghost, displayText: ghost.trimStart() };
   }
 }

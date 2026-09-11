@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { deriveCaretFromDomSelection } from "./caret";
+import { deriveCaretFromDomSelection, validTrackedCaret } from "./caret";
 
 /**
  * Collect derivation trace lines so a failure is diagnosable from the test output.
@@ -170,5 +170,89 @@ describe("deriveCaretFromDomSelection — multi-line blocks (code fences)", () =
       markdown,
     });
     expect(result).toEqual({ line: 4, character: 12 });
+  });
+});
+
+describe("preview exclusion (an undismissed ghost must not corrupt the derivation)", () => {
+  it("derives the same caret whether or not its own ghost sits in the block", () => {
+    const markdown = "-  Add tests for mid-wordX\n";
+    const withGhost = placeCaret(
+      `<ul><li>Add tests for mid-wordX<span class="inscribe-ghost">X</span></li></ul>`,
+      "li",
+      22,
+    );
+    const derivedWithGhost = deriveCaretFromDomSelection({
+      writingArea: withGhost.write,
+      selection: withGhost.selection,
+      markdown,
+    });
+
+    // Re-render only AFTER reading the first result: placeCaret rewrites the body
+    // and moves the live selection out from under it.
+    const plain = placeCaret(`<ul><li>Add tests for mid-wordX</li></ul>`, "li", 22);
+    const derivedWithoutGhost = deriveCaretFromDomSelection({
+      writingArea: plain.write,
+      selection: plain.selection,
+      markdown,
+    });
+
+    expect(derivedWithGhost).not.toBeNull();
+    expect(derivedWithGhost).toEqual(derivedWithoutGhost);
+  });
+});
+
+describe("blocks whose rendered text hides its own line separators", () => {
+  it("refuses the caret instead of reporting a confident wrong one", () => {
+    const markdown = [
+      "Intro",
+      "",
+      "```js",
+      "def add(a, b): return a + b",
+      "function multiply(a, b) {",
+      "```",
+      "",
+      "Outro",
+    ].join("\n");
+    // Typora renders a fence's indentation and breaks via CSS, so the block text
+    // arrives without them and its line structure is not recoverable.
+    const html =
+      "<p>Intro</p><pre><span>def add(a, b): return a + b</span><span>function multiply(a, b) {</span></pre><p>Outro</p>";
+    const { selection, write } = placeCaret(html, "pre span", 10);
+    const log = makeLog();
+    const result = deriveCaretFromDomSelection({
+      writingArea: write,
+      selection,
+      markdown,
+      log: log.log,
+    });
+
+    expect(result).toBeNull();
+    expect(log.lines.join("\n")).toContain("no rendered line separators");
+  });
+});
+
+describe("validTrackedCaret", () => {
+  const markdown = "line one\nline two\n";
+
+  it("passes a position the document can hold", () => {
+    const position = { character: 4, line: 0 };
+    expect(validTrackedCaret(position, markdown)).toEqual(position);
+  });
+
+  it("allows the exact end of a line", () => {
+    const position = { character: 8, line: 1 };
+    expect(validTrackedCaret(position, markdown)).toEqual(position);
+  });
+
+  it("refuses the off-by-one overshoot the tracker produces at end of line", () => {
+    expect(validTrackedCaret({ character: 9, line: 1 }, markdown)).toBeNull();
+  });
+
+  it("refuses a line past the end of the document", () => {
+    expect(validTrackedCaret({ character: 0, line: 7 }, markdown)).toBeNull();
+  });
+
+  it("passes null through", () => {
+    expect(validTrackedCaret(null, markdown)).toBeNull();
   });
 });

@@ -3,12 +3,13 @@ import { debounce } from "radash";
 
 import { ChatSession } from "./client/chat";
 import { attachChatToggle } from "./chat-toggle";
-import { deriveCaretFromDomSelection } from "./completions/caret";
+import { deriveCaretFromDomSelection, validTrackedCaret } from "./completions/caret";
 import CompletionService from "./completions/service";
 import { attachSuggestionPanel } from "./components/SuggestionPanel";
 import { attachInlineGhost } from "./components/inline-ghost";
 import { BUILD, VERSION } from "./constants";
 import { diagLog } from "./diag";
+import { isUiInputTarget } from "./keys/ui-input";
 import { logger } from "./logging";
 import { OpenAICompatibleProvider } from "./providers/openai-compat";
 import { settings } from "./settings";
@@ -659,7 +660,7 @@ Promise.defer(async () => {
       markdown: state.markdown,
       log: diagLog,
     });
-    const caretPosition = derived ?? tracked;
+    const caretPosition = derived ?? validTrackedCaret(tracked, state.markdown);
     diagLog(
       `trigger${manual ? " (manual)" : ""} caret=${JSON.stringify(caretPosition)} source=${derived ? "dom" : "tracked"} ` +
         `tracked=${JSON.stringify(tracked)} derived=${JSON.stringify(derived)}` +
@@ -708,9 +709,8 @@ Promise.defer(async () => {
   const hotkeyHandler = (event: KeyboardEvent): void => {
     const parsed = parseHotkey(settings.triggerHotkey);
     if (!parsed) return;
-    // Never steal keys while typing in inputs (chat box, settings, search).
-    const tag = document.activeElement?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    // Never steal keys in UI inputs — but a CodeMirror textarea IS the editor.
+    if (isUiInputTarget(document.activeElement)) return;
 
     const key = event.key.toLowerCase();
     const isKey =
