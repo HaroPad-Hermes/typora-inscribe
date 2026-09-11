@@ -34,6 +34,8 @@ export interface EditPreviewOptions {
   onAccept: () => void;
   /** Document to attach to. Defaults to the global document. */
   doc?: Document;
+  /** Right edge of the text field, so the panel can pull in rather than overhang it. */
+  boundaryRight?: number;
 }
 
 /**
@@ -44,7 +46,7 @@ export interface EditPreviewOptions {
  *   measurable rect (the caller decides whether that is worth logging).
  */
 export function attachEditPreview(options: EditPreviewOptions): (() => void) | null {
-  const { doc = document, onAccept, passage, rect, replacement, title } = options;
+  const { boundaryRight, doc = document, onAccept, passage, rect, replacement, title } = options;
 
   // Anchorless means unanchored: pinning this to the window corner would assert
   // a selection that cannot be seen.
@@ -103,7 +105,7 @@ export function attachEditPreview(options: EditPreviewOptions): (() => void) | n
   actions.append(accept, cancel);
 
   panel.append(heading, before, after, actions);
-  placeNear(panel, rect, doc.defaultView);
+  placeNear(panel, rect, doc.defaultView, { boundaryRight });
   doc.body.appendChild(panel);
 
   const detach = attachDismissal({ doc, element: panel, onDismiss: remove });

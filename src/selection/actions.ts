@@ -58,24 +58,22 @@ export const findAction = (id: string): SelectionAction | null =>
 /**
  * Build the request for one action.
  *
- * The surrounding block is sent as context because a passage alone often cannot
- * be rewritten well — "it" has no referent, and the tone is set by the sentence
- * before it — but the passage is the only thing the model may replace.
+ * The passage is the whole request. An earlier version also sent the surrounding
+ * block under a "For context, it sits in:" heading, and that single line is what
+ * broke the feature: measured against the live endpoint, the context-bearing shape
+ * returned `finish_reason: length` with an EMPTY content after spending the entire
+ * 700-token budget on reasoning (and 2000 when given 2000), while the same request
+ * without it stopped at 69-270 reasoning tokens with a real answer. A passage-only
+ * request answered correctly in every shape tested. Do not re-add the context
+ * without re-probing this endpoint.
  *
  * @param action - The action to perform.
  * @param passage - The selected text, exactly as rendered.
- * @param context - The block the passage sits in, when available.
  * @returns The messages to send.
  */
-export function buildSelectionMessages(
-  action: SelectionAction,
-  passage: string,
-  context: string,
-): ChatMessage[] {
-  const messages: ChatMessage[] = [{ role: "system", content: action.instruction }];
-  const trimmed = context.trim();
-  const surroundings =
-    trimmed && trimmed !== passage.trim() ? `\n\nFor context, it sits in:\n${trimmed}` : "";
-  messages.push({ role: "user", content: `${passage}${surroundings}` });
-  return messages;
+export function buildSelectionMessages(action: SelectionAction, passage: string): ChatMessage[] {
+  return [
+    { role: "system", content: action.instruction },
+    { role: "user", content: passage },
+  ];
 }

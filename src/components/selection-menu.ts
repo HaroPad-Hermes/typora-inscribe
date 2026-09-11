@@ -20,6 +20,8 @@
 
 import type { SelectedText } from "../selection/selection";
 
+import "./selection-menu.scss";
+
 import { placeNear } from "./floating";
 import { attachDismissal } from "./floating-dismiss";
 
@@ -41,6 +43,8 @@ export interface AttachSelectionMenuOptions {
   actions: SelectionMenuAction[];
   /** Document to attach to. Defaults to the global document. */
   doc?: Document;
+  /** Right edge of the text field, so the bar can pull in rather than overhang it. */
+  boundaryRight?: number;
 }
 
 /**
@@ -52,7 +56,7 @@ export interface AttachSelectionMenuOptions {
  *   that is worth logging).
  */
 export function attachSelectionMenu(options: AttachSelectionMenuOptions): (() => void) | null {
-  const { actions, doc = document, selection } = options;
+  const { actions, boundaryRight, doc = document, selection } = options;
   const { rect } = selection;
 
   // A selection with no box cannot be anchored to; fail to "no menu" rather
@@ -83,7 +87,7 @@ export function attachSelectionMenu(options: AttachSelectionMenuOptions): (() =>
     menu.appendChild(button);
   }
 
-  placeNear(menu, rect, doc.defaultView);
+  placeNear(menu, rect, doc.defaultView, { boundaryRight });
   doc.body.appendChild(menu);
 
   let live = true;

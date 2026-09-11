@@ -30,21 +30,20 @@ describe("buildSelectionMessages", () => {
   const rewrite = SELECTION_ACTIONS[0]!;
 
   it("sends the instruction and the passage, in that order", () => {
-    const messages = buildSelectionMessages(rewrite, "the cat sat", "");
+    const messages = buildSelectionMessages(rewrite, "the cat sat");
     expect(messages.map((m) => m.role)).toEqual(["system", "user"]);
     expect(messages[0]!.content).toBe(rewrite.instruction);
     expect(messages[1]!.content).toBe("the cat sat");
   });
 
-  it("adds the surrounding block as context when it differs from the passage", () => {
-    const messages = buildSelectionMessages(rewrite, "the cat", "the cat sat on the mat");
-    expect(messages[1]!.content).toContain("the cat");
-    expect(messages[1]!.content).toContain("For context");
-    expect(messages[1]!.content).toContain("the cat sat on the mat");
-  });
-
-  it("does not repeat the passage as its own context", () => {
-    const messages = buildSelectionMessages(rewrite, "the cat", "  the cat  ");
-    expect(messages[1]!.content).toBe("the cat");
+  it("sends the passage ALONE — the context block is what broke the endpoint", () => {
+    // Measured against the live endpoint: a request carrying the surrounding
+    // block under a "For context, it sits in:" heading spent the whole token
+    // budget on reasoning and returned EMPTY content (finish_reason "length",
+    // 700/700 reasoning tokens — and 2000/2000 when given 2000), while the same
+    // passage without it answered after 69-270 reasoning tokens.
+    const messages = buildSelectionMessages(rewrite, "the cat sat");
+    expect(messages).toHaveLength(2);
+    expect(messages[1]!.content).toBe("the cat sat");
   });
 });

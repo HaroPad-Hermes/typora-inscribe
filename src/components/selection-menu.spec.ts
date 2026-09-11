@@ -63,20 +63,25 @@ describe("attachSelectionMenu", () => {
     expect(menuIn()).toBeNull();
   });
 
-  it("anchors above the selection when there is room", () => {
+  it("anchors below the selection by default", () => {
+    // Below, not above: a bar under the text it acts on is the behaviour the
+    // settings describe as "Below", and it is the shipped default.
     attachSelectionMenu({ actions: actions(), selection: CENTRED });
     const menu = menuIn()!;
-    expect(menu.style.top).toBe("162px"); // 200 - 32 (fallback height) - 6
-    expect(menu.style.top < `${CENTRED.rect.top}px`).toBe(true);
+    expect(menu.style.top).toBe(`${CENTRED.rect.top + CENTRED.rect.height + 10}px`);
+    expect(Number.parseFloat(menu.style.top)).toBeGreaterThan(CENTRED.rect.top);
   });
 
-  it("flips below the selection when the top edge has no room", () => {
-    attachSelectionMenu({
-      actions: actions(),
-      selection: selectionAt({ height: 18, left: 60, top: 2, width: 80 }),
+  it("flips above the selection when below does not fit", () => {
+    const view = document.defaultView!;
+    const nearBottom = selectionAt({
+      height: 18,
+      left: 60,
+      top: view.innerHeight - 30,
+      width: 80,
     });
-    // 2 + 18 + 6 — below rather than clamped onto the selection itself.
-    expect(menuIn()!.style.top).toBe("26px");
+    attachSelectionMenu({ actions: actions(), selection: nearBottom });
+    expect(Number.parseFloat(menuIn()!.style.top)).toBeLessThan(nearBottom.rect.top);
   });
 
   it("clamps to the left margin instead of overflowing the viewport", () => {

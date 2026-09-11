@@ -1,0 +1,41 @@
+/* The floating action bar for a selection.
+
+   Opaque on purpose. A translucent backdrop lets the document's text read
+   through the buttons, which makes the bar look broken and its labels
+   unreadable over bold or coloured text — the surface exists to be read at a
+   glance, so it takes the editor's own surface colour rather than revealing
+   what is behind it. */
+
+.inscribe-selection-menu {
+  position: fixed;
+  z-index: 1001;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-color, #d0d0d0);
+  border-radius: 6px;
+  background: var(--bg-color, #ffffff);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 22%);
+  color: var(--text-color, #333333);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.inscribe-selection-menu-action {
+  padding: 3px 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.inscribe-selection-menu-action:hover,
+.inscribe-selection-menu-action:focus-visible {
+  background: var(--active-file-bg-color, rgb(124 128 255 / 16%));
+  outline: none;
+}

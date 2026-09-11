@@ -116,8 +116,7 @@ export function attachSelectionActions(options: SelectionHostOptions = {}): () =
 
     inFlight = true;
     diagLog(`selection action ${action.id}: ${JSON.stringify(selection.text.slice(0, 40))}`);
-    const context = selection.block?.textContent ?? "";
-    void generate(buildSelectionMessages(action, selection.text, context), {
+    void generate(buildSelectionMessages(action, selection.text), {
       model: settings.model,
       maxTokens: SELECTION_MAX_TOKENS,
       temperature: settings.temperature,
@@ -137,6 +136,7 @@ export function attachSelectionActions(options: SelectionHostOptions = {}): () =
         attachEditPreview({
           rect: selection.rect,
           title: action.label,
+          boundaryRight: editorNow()?.writingArea.getBoundingClientRect().right,
           passage: planned.plan.before,
           replacement: planned.plan.replacement,
           onAccept: () => applyEdit(planned.plan),
@@ -179,7 +179,11 @@ export function attachSelectionActions(options: SelectionHostOptions = {}): () =
     if (signature === lastSignature) return;
     lastSignature = signature;
     detachMenu?.();
-    detachMenu = attachSelectionMenu({ selection: read.selection, actions: menuActions });
+    detachMenu = attachSelectionMenu({
+      selection: read.selection,
+      actions: menuActions,
+      boundaryRight: editor.writingArea.getBoundingClientRect().right,
+    });
   };
 
   document.addEventListener("mouseup", offerMenu, true);
