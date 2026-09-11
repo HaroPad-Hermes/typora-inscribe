@@ -18,7 +18,9 @@
  */
 
 import { deriveCaretFromDomSelection } from "../completions/caret";
-import type { LspRange, LspPosition as Position } from "../utils/tools";
+import type { EOL, LspRange, LspPosition as Position } from "../utils/tools";
+
+import { offsetAt } from "./edit-plan";
 
 export type RangeRefusal =
   | "no-selection"
@@ -110,6 +112,34 @@ export function selectionRange(options: SelectionRangeOptions): SelectionRangeRe
     return { ok: false, reason: "empty-range" };
 
   return { ok: true, range: { start, end }, start, end };
+}
+
+/**
+ * Whether a captured range still holds the text it was captured for.
+ *
+ * The bar is anchored to a span, not to the live selection: by the time an
+ * action runs, clicking the bar\u2019s own field has collapsed the document
+ * selection (Typora\u2019s preview selection IS the DOM selection, and the field
+ * must be clickable). So the run validates the captured range against the
+ * CURRENT document instead of re-reading a selection that no longer exists —
+ * which also catches an edit made while the bar was open.
+ *
+ * @param markdown - The document as it is now.
+ * @param range - The span captured when the bar opened.
+ * @param passage - The text that span held.
+ * @param eol - The document\u2019s line ending. Defaults to `"\\n"`.
+ * @returns Whether the span still holds exactly that text.
+ */
+export function rangeStillHolds(
+  markdown: string,
+  range: LspRange,
+  passage: string,
+  eol: EOL = "\n",
+): boolean {
+  const start = offsetAt(markdown, range.start, eol);
+  const end = offsetAt(markdown, range.end, eol);
+  if (start < 0 || end < start) return false;
+  return markdown.slice(start, end) === passage;
 }
 
 /**

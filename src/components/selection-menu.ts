@@ -137,10 +137,12 @@ export function attachSelectionMenu(options: SelectionMenuOptions): (() => void)
 
   placeNear(menu, rect, doc.defaultView, place);
   doc.body.appendChild(menu);
-  // Focus the field so typing lands in the bar, not the document — the
-  // reference implementation's behavior, and the only way "Ask AI anything…"
-  // is usable without a second click.
-  input.focus();
+  // The field is deliberately NOT focused. In Typora's live preview the
+  // document selection IS the DOM selection, so focusing anything else
+  // collapses it, which fires `selectionchange` and reads as "the user moved
+  // the caret" — the bar then retired itself a moment after appearing. The
+  // reference implementation does not focus its field either; the user clicks
+  // it, and by then the range has already been captured.
 
   const detach = attachDismissal({ doc, element: menu, onDismiss: remove });
 

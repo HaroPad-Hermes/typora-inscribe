@@ -28,7 +28,8 @@ import { settings } from "../settings";
 import { SELECTION_MAX_TOKENS, SELECTION_PRESETS, buildRewriteMessages } from "./actions";
 import { caretAfter, describeEditRefusal, offsetAt, planEdit } from "./edit-plan";
 import type { EditPlan } from "./edit-plan";
-import { describeRangeRefusal, selectionRange } from "./range";
+import { describeRangeRefusal, rangeStillHolds, selectionRange } from "./range";
+import type { SelectionRangeResult } from "./range";
 import { describeRefusal, readSelection, selectionSignature } from "./selection";
 import type { SelectedText } from "./selection";
 
@@ -90,22 +91,27 @@ export function attachSelectionActions(options: SelectionHostOptions = {}): () =
     }
   };
 
-  const run = (instruction: string, thinking: boolean, selection: SelectedText): void => {
+  const run = (
+    instruction: string,
+    thinking: boolean,
+    selection: SelectedText,
+    mapping: SelectionRangeResult,
+  ): void => {
     if (inFlight) return;
     const editor = editorNow();
     if (!editor) return;
 
     const eol = Files.useCRLF ? "\r\n" : "\n";
     const markdown = editor.getMarkdown();
-    const mapping = selectionRange({
-      writingArea: editor.writingArea,
-      selection: window.getSelection(),
-      markdown,
-      expectedText: selection.text,
-      log: diagLog,
-    });
     if (!mapping.ok) {
       diagLog(`selection action refused: ${describeRangeRefusal(mapping.reason)}`);
+      return;
+    }
+    // The span was captured when the bar opened; the live selection is gone by
+    // now (clicking the bar's field collapses it), so validate the captured
+    // span against the current document instead.
+    if (!rangeStillHolds(markdown, mapping.range, selection.text, eol)) {
+      diagLog(`selection action refused: ${describeRangeRefusal("selection-changed")}`);
       return;
     }
 
@@ -187,10 +193,11 @@ export function attachSelectionActions(options: SelectionHostOptions = {}): () =
       lastSignature = signature;
       detachMenu?.();
 
-      // Whether the selection spans lines picks the horizontal anchor in "smart"
-      // mode, and the DOM cannot answer it — a soft-wrapped line has no newline
-      // in it. Mapping here answers it, and the run-time mapping stays the
-      // authority on what is actually replaced.
+      // The span is mapped HERE, once, and the bar runs against it. Two reasons:
+      // the run cannot re-read a selection that clicking the field has already
+      // collapsed, and whether the selection spans lines picks the "smart"
+      // horizontal anchor, which the DOM cannot answer (a soft-wrapped line has
+      // no newline in it).
       const field = editor.writingArea.getBoundingClientRect();
       const probing = selectionRange({
         writingArea: editor.writingArea,
@@ -202,7 +209,7 @@ export function attachSelectionActions(options: SelectionHostOptions = {}): () =
       detachMenu = attachSelectionMenu({
         selection: read.selection,
         presets: SELECTION_PRESETS,
-        onRun: (instruction, thinking) => run(instruction, thinking, read.selection),
+        onRun: (instruction, thinking) => run(instruction, thinking, read.selection, probing),
         // The toggle starts where the setting is, so its state is never a lie.
         thinking: !settings.disableThinking,
         place: {
