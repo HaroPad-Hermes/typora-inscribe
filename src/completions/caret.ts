@@ -23,6 +23,14 @@ export interface CaretDerivationOptions {
   markdown: string;
   /** Diagnostic sink. Pass a no-op in tests. */
   log?: (message: string) => void;
+  /**
+   * Derive this point instead of the live selection's anchor.
+   *
+   * A text SELECTION has two endpoints and only the anchor is a caret, so the
+   * second endpoint has no way to reach this function otherwise. Passing it here
+   * is how a selection maps to the markdown range an edit would replace.
+   */
+  point?: { node: Node; offset: number };
 }
 
 /**
@@ -39,18 +47,19 @@ export interface CaretDerivationOptions {
  * @returns The caret position, or null when it cannot be derived (see `log`).
  */
 export function deriveCaretFromDomSelection(options: CaretDerivationOptions): Position | null {
-  const { log, markdown, selection: sel, writingArea } = options;
+  const { log, markdown, point, selection: sel, writingArea } = options;
   const trace = (msg: string) => log?.(`deriveCaret TRACE: ${msg}`);
   const doc = writingArea.ownerDocument;
 
   try {
-    if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) {
+    if (!sel || sel.rangeCount === 0 || (!sel.isCollapsed && !point)) {
       trace(
         `selection bad: sel=${String(Boolean(sel))} rangeCount=${sel?.rangeCount ?? -1} collapsed=${String(sel?.isCollapsed)}`,
       );
       return null;
     }
-    const anchor = sel.anchorNode;
+    const anchor = point?.node ?? sel.anchorNode;
+    const anchorOffset = point?.offset ?? sel.anchorOffset;
     if (!anchor || !writingArea.contains(anchor)) {
       const where = anchor ? `${anchor.nodeName}#${(anchor as Element).className}` : "null";
       trace(`anchor outside writingArea: ${where}`);
@@ -68,7 +77,7 @@ export function deriveCaretFromDomSelection(options: CaretDerivationOptions): Po
       return null;
     }
     trace(
-      `anchor=${anchor.nodeName} offset=${sel.anchorOffset} elem=${elem.tagName}.${elem.className}`,
+      `anchor=${anchor.nodeName} offset=${anchorOffset} elem=${elem.tagName}.${elem.className}`,
     );
 
     const norm = markdown.replace(/\r\n/g, "\n");
@@ -212,7 +221,7 @@ export function deriveCaretFromDomSelection(options: CaretDerivationOptions): Po
       if (el.tagName === "FIGURE") {
         const table = mapTableBlock({
           anchor,
-          anchorOffset: sel.anchorOffset,
+          anchorOffset,
           figure: el,
           fromLine: mdLineIdx,
           lines,
@@ -271,7 +280,7 @@ export function deriveCaretFromDomSelection(options: CaretDerivationOptions): Po
             const walker = textWalkerWithoutPreview(doc, el);
             let acc = 0;
             for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-              if (n === anchor) return acc + sel.anchorOffset;
+              if (n === anchor) return acc + anchorOffset;
               acc += n.textContent?.length ?? 0;
             }
             return -1;
@@ -294,11 +303,11 @@ export function deriveCaretFromDomSelection(options: CaretDerivationOptions): Po
             }
             return false;
           };
-          if (!collectBefore(el, anchor, sel.anchorOffset)) return -1;
+          if (!collectBefore(el, anchor, anchorOffset)) return -1;
           return acc;
         })();
         if (intraOffset < 0) {
-          trace(`intraOffset FAILED anchor=${anchor.nodeName} offset=${sel.anchorOffset}`);
+          trace(`intraOffset FAILED anchor=${anchor.nodeName} offset=${anchorOffset}`);
           return false;
         }
         // The caret can sit several lines into a multi-line block (code fence,
