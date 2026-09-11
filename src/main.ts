@@ -3,7 +3,7 @@ import { debounce } from "radash";
 
 import { ChatSession } from "./client/chat";
 import { attachChatToggle } from "./chat-toggle";
-import { deriveCaretFromDomSelection, validTrackedCaret } from "./completions/caret";
+import { deriveCaretFromDomSelection, noCaretReason, validTrackedCaret } from "./completions/caret";
 import CompletionService from "./completions/service";
 import { attachSuggestionPanel } from "./components/SuggestionPanel";
 import { attachInlineGhost } from "./components/inline-ghost";
@@ -686,7 +686,7 @@ Promise.defer(async () => {
           }
         });
     } else if (manual) {
-      diagLog("manual trigger: no caret position (derivation failed, tracker null)");
+      diagLog(`no caret position: ${noCaretReason(tracked, state.markdown)}`);
       flashNoSuggestion();
     }
   };

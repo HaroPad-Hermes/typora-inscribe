@@ -90,7 +90,10 @@ export function deriveCaretFromDomSelection(options: CaretDerivationOptions): Po
     }
     trace(`caretBlock=${caretBlock.tagName}.${caretBlock.className}`);
 
-    const caretBlockText = caretBlock.textContent.replace(/\s+/g, " ").trim();
+    // Read it the way the matcher will, so this trace shows the string the
+    // comparison actually sees. It used to log the raw DOM read, which disagreed
+    // by the ghost's own text — the exact confusion the exclusion exists to end.
+    const caretBlockText = textWithoutPreview(caretBlock).replace(/\s+/g, " ").trim();
     if (!caretBlockText) {
       trace("caretBlockText empty");
       return null;
@@ -238,7 +241,8 @@ export function deriveCaretFromDomSelection(options: CaretDerivationOptions): Po
       const matched = matchBlockLines(blockText, mdLineIdx);
       if (!matched) {
         trace(
-          `block NO-MATCH isCaret=${String(isCaret)} tag=${el.tagName} "${blockText.slice(0, 50)}" mdLineIdx=${mdLineIdx}`,
+          `block NO-MATCH isCaret=${String(isCaret)} tag=${el.tagName} "${blockText.slice(0, 50)}" mdLineIdx=${mdLineIdx}` +
+            ` html="${el.innerHTML.slice(0, 120)}"`,
         );
         return false; // skip unmatched (table with irregular cells, etc.)
       }
@@ -251,6 +255,9 @@ export function deriveCaretFromDomSelection(options: CaretDerivationOptions): Po
         // recoverable and the offset cannot be computed exactly. Refuse: a confident
         // wrong caret is worse than no suggestion, and is the failure this whole
         // derivation exists to remove.
+        // Reachability, verified live: for a caret inside a fence this branch is not
+        // reached — the anchor is refused earlier because it lives in CodeMirror — so
+        // it is defence for a future fence path, NOT the fence fix.
         if (matched.approximate && !el.textContent.includes("\n")) {
           trace(`block matched approximately — no rendered line separators, offset not derivable`);
           return false;
@@ -345,9 +352,44 @@ export function deriveCaretFromDomSelection(options: CaretDerivationOptions): Po
  * @param markdown - The document the position must be valid in.
  * @returns The position when the document can hold it, otherwise null.
  */
-export function validTrackedCaret(tracked: Position | null, markdown: string): Position | null {
-  if (!tracked) return null;
+/**
+ * Why a tracked caret cannot be trusted, or null when it can.
+ *
+ * @param tracked - The tracker's last known caret, or null.
+ * @param markdown - The document the position must be valid in.
+ * @returns The refusal, or null when the position is usable.
+ */
+export function trackedRefusal(
+  tracked: Position | null,
+  markdown: string,
+): "never-tracked" | "out-of-range" | null {
+  if (!tracked) return "never-tracked";
   const line = markdown.split(/\r?\n/)[tracked.line];
-  if (line === undefined) return null;
-  return tracked.character > line.length ? null : tracked;
+  if (line === undefined) return "out-of-range";
+  return tracked.character > line.length ? "out-of-range" : null;
+}
+
+/**
+ * Explain why the trigger produced no caret position.
+ *
+ * The two refusals are different problems — a tracker that never saw an edit is
+ * normal after a click, one that the document cannot hold is the bug this
+ * validation exists to catch — and one message for both made the log say
+ * "tracker null" about a position that did exist.
+ *
+ * @param tracked - The tracker's last known caret, or null.
+ * @param markdown - The document the position must be valid in.
+ * @returns A log-ready sentence naming the refusal.
+ */
+export const noCaretReason = (tracked: Position | null, markdown: string): string => {
+  const refusal = trackedRefusal(tracked, markdown);
+  if (refusal === "never-tracked")
+    return "derivation failed and the tracker never saw an edit (null)";
+  if (refusal === "out-of-range")
+    return "derivation failed and the tracked caret is past the end of its line";
+  return "derivation failed, but the tracked caret was usable (unexpected: it should have been used)";
+};
+
+export function validTrackedCaret(tracked: Position | null, markdown: string): Position | null {
+  return trackedRefusal(tracked, markdown) === null ? tracked : null;
 }

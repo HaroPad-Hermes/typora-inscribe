@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { deriveCaretFromDomSelection, validTrackedCaret } from "./caret";
+import {
+  deriveCaretFromDomSelection,
+  noCaretReason,
+  trackedRefusal,
+  validTrackedCaret,
+} from "./caret";
 
 /**
  * Collect derivation trace lines so a failure is diagnosable from the test output.
@@ -254,5 +259,39 @@ describe("validTrackedCaret", () => {
 
   it("passes null through", () => {
     expect(validTrackedCaret(null, markdown)).toBeNull();
+  });
+});
+
+/** Fixture for the tracked-caret refusal tests: two 8-character lines. */
+const trackedLines = "line one\nline two\n";
+
+describe("trackedRefusal", () => {
+  it("names a tracker that never saw an edit", () => {
+    expect(trackedRefusal(null, trackedLines)).toBe("never-tracked");
+  });
+
+  it("names a position the document cannot hold", () => {
+    expect(trackedRefusal({ character: 27, line: 1 }, trackedLines)).toBe("out-of-range");
+    expect(trackedRefusal({ character: 0, line: 99 }, trackedLines)).toBe("out-of-range");
+  });
+
+  it("is null for a position the document can hold", () => {
+    expect(trackedRefusal({ character: 8, line: 1 }, trackedLines)).toBeNull();
+  });
+});
+
+describe("noCaretReason", () => {
+  it("does not report a rejected position as a missing tracker", () => {
+    // One message for both cases made the log say "tracker null" about a
+    // position that did exist, which is the wrong lead to debug from.
+    const rejected = noCaretReason({ character: 27, line: 1 }, trackedLines);
+    const missing = noCaretReason(null, trackedLines);
+    expect(rejected).not.toBe(missing);
+    expect(rejected).toContain("past the end");
+    expect(missing).toContain("never saw an edit");
+  });
+
+  it("says so when the position was usable, rather than blaming the derivation", () => {
+    expect(noCaretReason({ character: 8, line: 1 }, trackedLines)).toContain("unexpected");
   });
 });

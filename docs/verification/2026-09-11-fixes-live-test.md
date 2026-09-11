@@ -222,8 +222,9 @@ ambiguity in this loop.
 
 ## 7 — Housekeeping (this worktree is shared)
 
-- The shared checkout at `C:\Users\HaroPad_\Documents\typora-inscribe` is on `main` @ `81a04a5`,
-  **clean**. Do not switch branches or `git checkout --` in it while another session is working;
+- The shared checkout at `C:\Users\HaroPad_\Documents\typora-inscribe` is on
+  `probe/caret-cursor-log` @ `815f85c` (identical to `main`) — check with `git rev-parse --abbrev-ref HEAD`,
+  not the hash, because the two branches point at the same commit and the checkout is not on `main`. Do not switch branches or `git checkout --` in it while another session is working;
   use a worktree (`git worktree add ../typora-inscribe-<name> <branch>`).
 - Build **after** committing (`npm run build:dev` stamps the commit at rollup time), then
   `cp dist/index.js "C:/Program Files/Typora/resources/copilot/index.js"` — no elevation needed.
@@ -237,3 +238,45 @@ ambiguity in this loop.
 - **Never run `eslint --fix` / `prettier --write` over `src/completions` or `src/components`.**
   It reformats ~600 lines of pre-existing prettier debt in unrelated files and drops the lint
   count 161 → 72, which invalidates every ratchet number. It was reverted once already.
+- **`eslint <file>` prints "1 problem" in the singular.** A grep for `[0-9]+ problems` silently
+  reports 0 for any file with exactly one error — check the bare count, not a phrase.
+
+---
+
+## Post-run follow-up — what changed after this verification
+
+The three new findings are handled as follows. This section is for whoever next touches
+`caret.ts` or `preview-text.ts`.
+
+**Finding B (the trace logged the raw read) — fixed.** `caretBlockText=` now prints the
+preview-filtered text, the same string the matcher compares, so the log can no longer
+disagree with what the code did.
+
+**Finding C (one message for two causes) — fixed.** `noCaretReason(tracked, markdown)`
+separates "the tracker never saw an edit" from "the tracked caret is past the end of its
+line", and the log names which one fired. `validTrackedCaret` is a wrapper over
+`trackedRefusal`.
+
+**Finding A (the phantom leading `x `) — instrumented, not closed.** The root cause is not
+identified, and guessing a filter is the confidently-wrong move this derivation exists to
+prevent. So instead:
+
+- every block read now excludes subtrees that cannot contribute rendered text — form
+  controls (`TEXTAREA`/`INPUT`/`SELECT`, whose content is a *value*, which is what a fence's
+  hidden input holds) and hidden elements (inline `display:none` / `visibility:hidden`,
+  `[hidden]`, and computed styles, which covers a widget hidden by a class such as
+  CodeMirror's measurement node). **The phantom may already be gone** — the class-based
+  hide is exactly what the earlier build comparison suggested;
+- a NO-MATCH now logs `html="…"` with the block's first 120 characters of HTML, so any
+  surviving widget is identifiable **from the log alone**, no devtools needed (devtools are
+  debug-gated and `--remote-debugging-port` crashes Typora 1.14.9);
+- the suggested "tolerate a leading token / match on a suffix" was **not** taken. It makes
+  matching guess, and a wrong block match is a wrong caret. If the phantom survives, the new
+  `html=` field names the node and the rule can be extended for that actual node.
+
+Unchanged and still true: the approximate branch is unreachable for a live fence caret (the
+CodeMirror anchor is refused before matching), so T5's expected trace cannot appear and its
+absence is **not** a regression. The fence path needs the CodeMirror anchor, not this path.
+
+> Note the phantom is not necessarily a fence-only hazard: the exclusion applies to every
+> block read, and the `html=` field is logged for every NO-MATCH.
