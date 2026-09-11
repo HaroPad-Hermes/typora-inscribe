@@ -177,6 +177,51 @@ describe("attachSelectionActions (end to end, fake editor)", () => {
     detach();
   });
 
+  it("survives a click that collapses the selection, and still edits the captured span", async () => {
+    // The live report: clicking the bar's own field collapses the document
+    // selection (Typora's live-preview selection IS the DOM selection), the bar
+    // retired itself, and nothing on screen said what would be replaced. The
+    // harness has to collapse it by hand — happy-dom has no focus semantics.
+    const recorder: Recorder = { applied: null, reloads: 0 };
+    document.body.innerHTML = `<div id="write"><p>the cat sat on the mat</p></div>`;
+    fakeFiles("the cat sat on the mat\n", recorder);
+    const detach = attachSelectionActions({ generate: () => Promise.resolve(ANSWER) });
+
+    select("p", 0, 7);
+    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    await vi.waitFor(
+      () => {
+        expect(document.querySelector(".inscribe-selection-menu")).not.toBeNull();
+      },
+      { timeout: 2000 },
+    );
+
+    for (const selection of [document.getSelection(), window.getSelection()]) {
+      selection?.removeAllRanges();
+    }
+    document.dispatchEvent(new Event("selectionchange"));
+    await new Promise((resolve) => setTimeout(resolve, 450));
+
+    // The bar survives a collapse it caused itself...
+    expect(document.querySelector(".inscribe-selection-menu")).not.toBeNull();
+
+    document.querySelector<HTMLButtonElement>("[data-action='rephrase']")!.click();
+    await vi.waitFor(
+      () => {
+        expect(document.querySelector(".inscribe-selection-preview")).not.toBeNull();
+      },
+      { timeout: 2000 },
+    );
+    document
+      .querySelector<HTMLButtonElement>(".inscribe-selection-preview [data-role='accept']")!
+      .click();
+
+    // ...and the edit lands on the span captured when it opened, not on a
+    // selection that no longer exists.
+    expect(recorder.applied).toBe("the cat sat down. sat on the mat\n");
+    detach();
+  });
+
   it("refuses a selection it cannot map instead of guessing a range", async () => {
     // A fence's caret lives in CodeMirror, so this is the refusal the fence path
     // produces — and the whole point is that no preview and no write follow.
