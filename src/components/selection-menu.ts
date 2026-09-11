@@ -30,6 +30,14 @@ import "./selection-menu.scss";
 
 export const SELECTION_MENU_CLASS = "inscribe-selection-menu";
 
+/** What the caller needs to steer an open bar. */
+export interface SelectionMenuHandle {
+  /** Take the bar down. Safe to call twice. */
+  remove: () => void;
+  /** Mark it busy while the model works, and idle again when it answers. */
+  setBusy: (busy: boolean) => void;
+}
+
 export interface SelectionMenuOptions {
   /** The selection to act on; its rect anchors the bar. */
   selection: SelectedText;
@@ -49,10 +57,10 @@ export interface SelectionMenuOptions {
  * Show the action bar for a selection.
  *
  * @param options - Selection, presets, the run handler and geometry.
- * @returns A function that removes the bar and its listeners, or null when the
- *   selection has no measurable rect to anchor to.
+ * @returns A handle for the bar, or null when the selection has no measurable
+ *   rect to anchor to.
  */
-export function attachSelectionMenu(options: SelectionMenuOptions): (() => void) | null {
+export function attachSelectionMenu(options: SelectionMenuOptions): SelectionMenuHandle | null {
   const { doc = document, onRun, place, presets, selection, thinking = false } = options;
   const { rect } = selection;
 
@@ -69,17 +77,29 @@ export function attachSelectionMenu(options: SelectionMenuOptions): (() => void)
   menu.addEventListener("mousedown", (event) => event.preventDefault());
 
   let live = true;
+  let busy = false;
   const remove = (): void => {
     if (!live) return;
     live = false;
     detach();
     menu.remove();
   };
+  const setBusy = (next: boolean): void => {
+    busy = next;
+    menu.classList.toggle(`${SELECTION_MENU_CLASS}-busy`, next);
+    for (const control of Array.from(menu.querySelectorAll("button, input"))) {
+      (control as HTMLButtonElement | HTMLInputElement).disabled = next;
+    }
+  };
 
   // One state for the bar: the toggle and every run read the same value.
   let wantsThinking = thinking;
   const run = (instruction: string): void => {
-    remove();
+    // The bar stays up while the model works — it is the only thing on screen
+    // saying a request is in flight — and the caller takes it down when there is
+    // a result to show. Re-running is blocked by the busy state, not by absence.
+    if (busy) return;
+    setBusy(true);
     onRun(instruction, wantsThinking);
   };
 
@@ -94,7 +114,9 @@ export function attachSelectionMenu(options: SelectionMenuOptions): (() => void)
     button.type = "button";
     button.className = `${SELECTION_MENU_CLASS}-action`;
     button.dataset.action = preset.id;
-    button.textContent = preset.short;
+    // A glyph, with the full label on hover — six words made the bar wide
+    // enough to cover the text it acts on.
+    button.textContent = preset.glyph;
     button.title = preset.label;
     button.addEventListener("click", () => run(preset.instruction));
     menu.append(button);
@@ -146,5 +168,5 @@ export function attachSelectionMenu(options: SelectionMenuOptions): (() => void)
 
   const detach = attachDismissal({ doc, element: menu, onDismiss: remove });
 
-  return remove;
+  return { remove, setBusy };
 }

@@ -19,6 +19,7 @@
  */
 
 import { attachSelectionMenu } from "../components/selection-menu";
+import type { SelectionMenuHandle } from "../components/selection-menu";
 import { attachEditPreview } from "../components/selection-preview";
 import { diagLog } from "../diag";
 import { OpenAICompatibleProvider } from "../providers/openai-compat";
@@ -55,7 +56,7 @@ export interface SelectionHostOptions {
 export function attachSelectionActions(options: SelectionHostOptions = {}): () => void {
   const provider = new OpenAICompatibleProvider(settings);
   const generate = options.generate ?? provider.generateOnce.bind(provider);
-  let detachMenu: (() => void) | null = null;
+  let bar: SelectionMenuHandle | null = null;
   let lastSignature = "";
   let inFlight = false;
   let showTimer: number | null = null;
@@ -100,18 +101,24 @@ export function attachSelectionActions(options: SelectionHostOptions = {}): () =
     if (inFlight) return;
     const editor = editorNow();
     if (!editor) return;
+    // Any refusal hands the bar back so the user can try another action
+    // instead of watching a frozen toolbar.
+    const refuse = (message: string): void => {
+      diagLog(message);
+      bar?.setBusy(false);
+    };
 
     const eol = Files.useCRLF ? "\r\n" : "\n";
     const markdown = editor.getMarkdown();
     if (!mapping.ok) {
-      diagLog(`selection action refused: ${describeRangeRefusal(mapping.reason)}`);
+      refuse(`selection action refused: ${describeRangeRefusal(mapping.reason)}`);
       return;
     }
     // The span was captured when the bar opened; the live selection is gone by
     // now (clicking the bar's field collapses it), so validate the captured
     // span against the current document instead.
     if (!rangeStillHolds(markdown, mapping.range, selection.text, eol)) {
-      diagLog(`selection action refused: ${describeRangeRefusal("selection-changed")}`);
+      refuse(`selection action refused: ${describeRangeRefusal("selection-changed")}`);
       return;
     }
 
@@ -149,9 +156,11 @@ export function attachSelectionActions(options: SelectionHostOptions = {}): () =
             planned.reason === "empty-output" && thinking ?
               " (thinking spent the budget — try the Think toggle off)"
             : "";
-          diagLog(`selection edit refused: ${describeEditRefusal(planned.reason)}${hint}`);
+          refuse(`selection edit refused: ${describeEditRefusal(planned.reason)}${hint}`);
           return;
         }
+        bar?.remove();
+        bar = null;
         attachEditPreview({
           rect: selection.rect,
           title: instruction.slice(0, 40),
@@ -162,7 +171,7 @@ export function attachSelectionActions(options: SelectionHostOptions = {}): () =
         });
       })
       .catch((error: unknown) => {
-        diagLog(`selection action failed: ${String(error)}`);
+        refuse(`selection action failed: ${String(error)}`);
       })
       .finally(() => {
         inFlight = false;
@@ -180,18 +189,23 @@ export function attachSelectionActions(options: SelectionHostOptions = {}): () =
         selection: window.getSelection(),
       });
       if (!read.ok) {
-        // A click inside our own UI, or a fresh caret, both retire the bar.
-        detachMenu?.();
-        detachMenu = null;
-        lastSignature = "";
-        if (read.reason !== "collapsed" && read.reason !== INSIDE_OUR_UI)
-          diagLog(`selection menu: ${describeRefusal(read.reason)}`);
+        // A collapsed selection must NOT retire an open bar: in Typora clicking
+        // the bar's own field collapses the document selection, and retiring on
+        // that made the bar vanish the moment it was used. The bar's own
+        // dismissers (Escape, save, outside click, scroll) close it instead, and
+        // a NEW selection replaces it through the signature below.
+        if (!bar) {
+          lastSignature = "";
+          if (read.reason !== "collapsed" && read.reason !== INSIDE_OUR_UI)
+            diagLog(`selection menu: ${describeRefusal(read.reason)}`);
+        }
         return;
       }
       const signature = selectionSignature(read.selection);
       if (signature === lastSignature) return;
       lastSignature = signature;
-      detachMenu?.();
+      bar?.remove();
+      bar = null;
 
       // The span is mapped HERE, once, and the bar runs against it. Two reasons:
       // the run cannot re-read a selection that clicking the field has already
@@ -206,7 +220,7 @@ export function attachSelectionActions(options: SelectionHostOptions = {}): () =
         expectedText: read.selection.text,
         log: diagLog,
       });
-      detachMenu = attachSelectionMenu({
+      bar = attachSelectionMenu({
         selection: read.selection,
         presets: SELECTION_PRESETS,
         onRun: (instruction, thinking) => run(instruction, thinking, read.selection, probing),
@@ -232,7 +246,7 @@ export function attachSelectionActions(options: SelectionHostOptions = {}): () =
     if (showTimer !== null) window.clearTimeout(showTimer);
     document.removeEventListener("mouseup", offerMenu, true);
     document.removeEventListener("selectionchange", offerMenu, true);
-    detachMenu?.();
-    detachMenu = null;
+    bar?.remove();
+    bar = null;
   };
 }

@@ -25,8 +25,14 @@ export interface SelectionAction {
   id: string;
   /** Full label: the button's tooltip, and its name in settings. */
   label: string;
-  /** Compact label for the bar itself, where six full labels would not fit. */
+  /** Compact label, for logs and settings. */
   short: string;
+  /**
+   * The bar shows this single glyph; the full `label` is its hover tooltip.
+   * Six words made the bar wide enough to cover the text it acts on, which is
+   * worse than a symbol a user has to hover once.
+   */
+  glyph: string;
   /** The instruction sent to the model. */
   instruction: string;
 }
@@ -35,6 +41,7 @@ export interface SelectionAction {
 export const SELECTION_PRESETS: SelectionAction[] = [
   {
     id: "rephrase",
+    glyph: "↻",
     short: "Rephrase",
     label: "Rephrase",
     instruction:
@@ -42,6 +49,7 @@ export const SELECTION_PRESETS: SelectionAction[] = [
   },
   {
     id: "shorten",
+    glyph: "↓",
     short: "Shorten",
     label: "Shorten",
     instruction:
@@ -49,6 +57,7 @@ export const SELECTION_PRESETS: SelectionAction[] = [
   },
   {
     id: "expand",
+    glyph: "↑",
     short: "Expand",
     label: "Expand",
     instruction:
@@ -56,12 +65,14 @@ export const SELECTION_PRESETS: SelectionAction[] = [
   },
   {
     id: "formal",
+    glyph: "⚖",
     short: "Formal",
     label: "Make more formal",
     instruction: "Rewrite the selected text to be more formal and professional.",
   },
   {
     id: "grammar",
+    glyph: "✓",
     short: "Grammar",
     label: "Fix grammar and spelling",
     instruction:
@@ -69,6 +80,7 @@ export const SELECTION_PRESETS: SelectionAction[] = [
   },
   {
     id: "latex",
+    glyph: "Σ",
     short: "LaTeX",
     label: "Convert math to LaTeX",
     instruction:

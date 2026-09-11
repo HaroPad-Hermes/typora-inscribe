@@ -9,8 +9,14 @@ const RECT = { left: 100, top: 200, width: 80, height: 18 };
 const SELECTION = { text: "the cat sat", rect: RECT, block: null };
 
 const PRESETS: SelectionAction[] = [
-  { id: "rephrase", label: "Rephrase", short: "Rephrase", instruction: "Rephrase it." },
-  { id: "shorten", label: "Shorten a lot", short: "Shorten", instruction: "Shorten it." },
+  { id: "rephrase", glyph: "↻", label: "Rephrase", short: "Rephrase", instruction: "Rephrase it." },
+  {
+    id: "shorten",
+    glyph: "↓",
+    label: "Shorten a lot",
+    short: "Shorten",
+    instruction: "Shorten it.",
+  },
 ];
 
 /**
@@ -50,27 +56,41 @@ describe("attachSelectionMenu", () => {
       "shorten",
       null,
     ]);
-    expect(buttons[0]!.textContent).toBe("Rephrase");
+    // A glyph in the bar, the full name on hover.
+    expect(buttons[0]!.textContent).toBe(PRESETS[0]!.glyph);
     expect(buttons[0]!.title).toBe("Rephrase");
     expect(bar()!.querySelector(`.${SELECTION_MENU_CLASS}-input`)).not.toBeNull();
     expect(bar()!.querySelector("[data-role='thinking']")).not.toBeNull();
     expect(bar()!.querySelectorAll(`.${SELECTION_MENU_CLASS}-divider`)).toHaveLength(2);
   });
 
-  it("runs the preset's instruction, then closes", () => {
+  it("runs the preset's instruction and KEEPS the bar up while the model works", () => {
+    // It is the only thing on screen saying a request is in flight; the caller
+    // takes it down once there is a result to show.
     const { onRun } = attach();
     bar()!.querySelector<HTMLButtonElement>("[data-action='shorten']")!.click();
     expect(onRun).toHaveBeenCalledWith("Shorten it.", false);
-    expect(bar()).toBeNull();
+    expect(bar()).not.toBeNull();
+    expect(bar()!.className).toContain("busy");
+    expect(bar()!.querySelector<HTMLButtonElement>("[data-action='rephrase']")!.disabled).toBe(
+      true,
+    );
   });
 
-  it("runs what the user typed, then closes", () => {
+  it("runs what the user typed and keeps the bar up", () => {
     const { onRun } = attach();
     const input = bar()!.querySelector<HTMLInputElement>(`.${SELECTION_MENU_CLASS}-input`)!;
     input.value = "make it sound Swedish";
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
     expect(onRun).toHaveBeenCalledWith("make it sound Swedish", false);
-    expect(bar()).toBeNull();
+    expect(bar()).not.toBeNull();
+  });
+
+  it("refuses a second run while one is in flight", () => {
+    const { onRun } = attach();
+    bar()!.querySelector<HTMLButtonElement>("[data-action='shorten']")!.click();
+    bar()!.querySelector<HTMLButtonElement>("[data-action='rephrase']")!.click();
+    expect(onRun).toHaveBeenCalledTimes(1);
   });
 
   it("ignores an empty ask", () => {
