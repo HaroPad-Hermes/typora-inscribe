@@ -146,10 +146,13 @@ export const replaceTextByRange = (
     ].join(eol);
 
   const endLine = lines[end.line]!;
+  // The span is REPLACED: its middle lines go, and the tail of the last line
+  // joins the replacement directly. Keeping the middle lines and emitting the
+  // tail as its own array element left both the discarded text and a spurious
+  // newline (replacing "on|two|o" with "X" produced "onX\no" for "onXo").
   return [
     ...lines.slice(0, start.line),
-    startLine.slice(0, start.character) + newText,
-    ...lines.slice(start.line + 1, end.line),
-    endLine.slice(end.character),
+    startLine.slice(0, start.character) + newText + endLine.slice(end.character),
+    ...lines.slice(end.line + 1),
   ].join(eol);
 };
