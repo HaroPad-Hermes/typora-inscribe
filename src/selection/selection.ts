@@ -23,6 +23,7 @@ export const INSCRIBE_UI_SELECTOR = [
   ".inscribe-settings",
   ".inscribe-ghost",
   ".inscribe-selection-menu",
+  ".inscribe-selection-preview",
 ].join(", ");
 
 /** Selections longer than this are refused rather than sent to a model. */

@@ -20,13 +20,8 @@
 
 import type { SelectedText } from "../selection/selection";
 
-/** Vertical gap between the selection and the menu. */
-const MENU_GAP = 6;
-/** Keep this far from the viewport edges. */
-const EDGE_MARGIN = 8;
-/** Used before layout exists (and in tests, where nothing is laid out). */
-const FALLBACK_WIDTH = 200;
-const FALLBACK_HEIGHT = 32;
+import { placeNear } from "./floating";
+import { attachDismissal } from "./floating-dismiss";
 
 export const SELECTION_MENU_CLASS = "inscribe-selection-menu";
 
@@ -46,28 +41,6 @@ export interface AttachSelectionMenuOptions {
   actions: SelectionMenuAction[];
   /** Document to attach to. Defaults to the global document. */
   doc?: Document;
-}
-
-/**
- * Position the menu against the selection, above it when there is room.
- *
- * @param menu - The menu element.
- * @param rect - The selection's rect in viewport coordinates.
- * @param view - The window, for viewport bounds.
- */
-function placeMenu(menu: HTMLElement, rect: SelectedText["rect"], view: Window | null): void {
-  const width = menu.offsetWidth || FALLBACK_WIDTH;
-  const height = menu.offsetHeight || FALLBACK_HEIGHT;
-  const viewportWidth = view?.innerWidth ?? 0;
-
-  const maxLeft = Math.max(EDGE_MARGIN, viewportWidth - width - EDGE_MARGIN);
-  const left = viewportWidth > 0 ? Math.min(Math.max(rect.left, EDGE_MARGIN), maxLeft) : rect.left;
-
-  const above = rect.top - height - MENU_GAP;
-  const top = above < EDGE_MARGIN ? rect.top + rect.height + MENU_GAP : above;
-
-  menu.style.left = `${Math.round(left)}px`;
-  menu.style.top = `${Math.round(top)}px`;
 }
 
 /**
@@ -110,37 +83,18 @@ export function attachSelectionMenu(options: AttachSelectionMenuOptions): (() =>
     menu.appendChild(button);
   }
 
-  menu.style.position = "fixed";
-  placeMenu(menu, rect, doc.defaultView);
+  placeNear(menu, rect, doc.defaultView);
   doc.body.appendChild(menu);
 
   let live = true;
-  const onKeyDown = (event: Event): void => {
-    if (!(event instanceof KeyboardEvent)) return;
-    const isEscape = event.key === "Escape";
-    // Same save-safety rule as the ghost: never leave plugin UI up across a save.
-    const isSave = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s";
-    if (isEscape || isSave) remove();
-  };
-  const onPointerDown = (event: Event): void => {
-    const target = event.target;
-    if (target instanceof Node && menu.contains(target)) return;
-    remove();
-  };
   const remove = (): void => {
     if (!live) return;
     live = false;
-    doc.removeEventListener("keydown", onKeyDown, true);
-    doc.removeEventListener("mousedown", onPointerDown, true);
-    doc.defaultView?.removeEventListener("scroll", remove, true);
-    doc.defaultView?.removeEventListener("blur", remove);
+    detach();
     menu.remove();
   };
 
-  doc.addEventListener("keydown", onKeyDown, true);
-  doc.addEventListener("mousedown", onPointerDown, true);
-  doc.defaultView?.addEventListener("scroll", remove, true);
-  doc.defaultView?.addEventListener("blur", remove);
+  const detach = attachDismissal({ doc, element: menu, onDismiss: remove });
 
   return remove;
 }
