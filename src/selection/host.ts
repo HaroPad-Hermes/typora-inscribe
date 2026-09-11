@@ -23,6 +23,7 @@ import type { SelectionMenuAction } from "../components/selection-menu";
 import { attachEditPreview } from "../components/selection-preview";
 import { diagLog } from "../diag";
 import { OpenAICompatibleProvider } from "../providers/openai-compat";
+import type { ChatMessage, GenerateOnceOptions } from "../providers/provider";
 import { settings } from "../settings";
 
 import {
@@ -41,13 +42,23 @@ import type { SelectedText } from "./selection";
 /** The plugin's own UI must never be read as document text. */
 const INSIDE_OUR_UI = "inside-inscribe-ui";
 
+export interface SelectionHostOptions {
+  /**
+   * The model call. Defaults to the configured provider; injected by tests so
+   * the flow can be driven end to end without a request (or a key).
+   */
+  generate?: (messages: ChatMessage[], opts: GenerateOnceOptions) => Promise<string>;
+}
+
 /**
  * Attach the selection actions.
  *
+ * @param options - Optional model call override, for tests.
  * @returns A function that detaches everything it attached.
  */
-export function attachSelectionActions(): () => void {
+export function attachSelectionActions(options: SelectionHostOptions = {}): () => void {
   const provider = new OpenAICompatibleProvider(settings);
+  const generate = options.generate ?? provider.generateOnce.bind(provider);
   let detachMenu: (() => void) | null = null;
   let lastSignature = "";
   let inFlight = false;
@@ -106,12 +117,11 @@ export function attachSelectionActions(): () => void {
     inFlight = true;
     diagLog(`selection action ${action.id}: ${JSON.stringify(selection.text.slice(0, 40))}`);
     const context = selection.block?.textContent ?? "";
-    void provider
-      .generateOnce(buildSelectionMessages(action, selection.text, context), {
-        model: settings.model,
-        maxTokens: SELECTION_MAX_TOKENS,
-        temperature: settings.temperature,
-      })
+    void generate(buildSelectionMessages(action, selection.text, context), {
+      model: settings.model,
+      maxTokens: SELECTION_MAX_TOKENS,
+      temperature: settings.temperature,
+    })
       .then((answer) => {
         const planned = planEdit({
           markdown: editorNow()?.getMarkdown() ?? markdown,
