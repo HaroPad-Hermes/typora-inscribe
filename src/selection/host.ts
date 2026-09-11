@@ -212,6 +212,10 @@ export function attachSelectionActions(options: SelectionHostOptions = {}): () =
       // collapsed, and whether the selection spans lines picks the "smart"
       // horizontal anchor, which the DOM cannot answer (a soft-wrapped line has
       // no newline in it).
+      // Captured before anything can collapse it: the bar mirrors this range so
+      // the user keeps seeing what would be replaced.
+      // Safe to index: this branch only runs for a non-collapsed selection.
+      const domRange = window.getSelection()?.getRangeAt(0).cloneRange();
       const field = editor.writingArea.getBoundingClientRect();
       const probing = selectionRange({
         writingArea: editor.writingArea,
@@ -222,6 +226,7 @@ export function attachSelectionActions(options: SelectionHostOptions = {}): () =
       });
       bar = attachSelectionMenu({
         selection: read.selection,
+        domRange,
         presets: SELECTION_PRESETS,
         onRun: (instruction, thinking) => run(instruction, thinking, read.selection, probing),
         // The toggle starts where the setting is, so its state is never a lie.

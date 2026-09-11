@@ -26,6 +26,7 @@ describe("SELECTION_PRESETS", () => {
     for (const preset of SELECTION_PRESETS) {
       expect(preset.short.length).toBeGreaterThan(0);
       expect(preset.short.length).toBeLessThanOrEqual(10);
+      expect(preset.icon.length).toBeGreaterThan(0);
       expect(preset.glyph.length).toBeGreaterThan(0);
       expect(preset.glyph.length).toBeLessThanOrEqual(2);
       expect(preset.label.length).toBeGreaterThan(preset.glyph.length);

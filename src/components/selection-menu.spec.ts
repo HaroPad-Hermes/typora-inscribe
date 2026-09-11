@@ -56,11 +56,11 @@ describe("attachSelectionMenu", () => {
       "shorten",
       null,
     ]);
-    // A glyph in the bar, the full name on hover.
-    expect(buttons[0]!.textContent).toBe(PRESETS[0]!.glyph);
+    // The reference's lucide icon in the bar, the full name on hover.
+    expect(buttons[0]!.querySelector("svg")).not.toBeNull();
     expect(buttons[0]!.title).toBe("Rephrase");
     expect(bar()!.querySelector(`.${SELECTION_MENU_CLASS}-input`)).not.toBeNull();
-    expect(bar()!.querySelector("[data-role='thinking']")).not.toBeNull();
+    expect(bar()!.querySelector("[data-role='thinking'] svg")).not.toBeNull();
     expect(bar()!.querySelectorAll(`.${SELECTION_MENU_CLASS}-divider`)).toHaveLength(2);
   });
 

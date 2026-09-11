@@ -27,8 +27,10 @@ export interface SelectionAction {
   label: string;
   /** Compact label, for logs and settings. */
   short: string;
+  /** The lucide icon the bar draws; the full `label` is its hover tooltip. */
+  icon: string;
   /**
-   * The bar shows this single glyph; the full `label` is its hover tooltip.
+   * Text fallback if the icon set ever lacks the name.
    * Six words made the bar wide enough to cover the text it acts on, which is
    * worse than a symbol a user has to hover once.
    */
@@ -41,6 +43,7 @@ export interface SelectionAction {
 export const SELECTION_PRESETS: SelectionAction[] = [
   {
     id: "rephrase",
+    icon: "wand-2",
     glyph: "↻",
     short: "Rephrase",
     label: "Rephrase",
@@ -49,6 +52,7 @@ export const SELECTION_PRESETS: SelectionAction[] = [
   },
   {
     id: "shorten",
+    icon: "minimize-2",
     glyph: "↓",
     short: "Shorten",
     label: "Shorten",
@@ -57,6 +61,7 @@ export const SELECTION_PRESETS: SelectionAction[] = [
   },
   {
     id: "expand",
+    icon: "maximize-2",
     glyph: "↑",
     short: "Expand",
     label: "Expand",
@@ -65,6 +70,7 @@ export const SELECTION_PRESETS: SelectionAction[] = [
   },
   {
     id: "formal",
+    icon: "graduation-cap",
     glyph: "⚖",
     short: "Formal",
     label: "Make more formal",
@@ -72,6 +78,7 @@ export const SELECTION_PRESETS: SelectionAction[] = [
   },
   {
     id: "grammar",
+    icon: "spell-check",
     glyph: "✓",
     short: "Grammar",
     label: "Fix grammar and spelling",
@@ -80,6 +87,7 @@ export const SELECTION_PRESETS: SelectionAction[] = [
   },
   {
     id: "latex",
+    icon: "sigma",
     glyph: "Σ",
     short: "LaTeX",
     label: "Convert math to LaTeX",

@@ -25,6 +25,9 @@ import type { SelectedText } from "../selection/selection";
 import type { PlacementOptions } from "./floating";
 import { placeNear } from "./floating";
 import { attachDismissal } from "./floating-dismiss";
+import { iconSvg } from "./selection-icons";
+import type { SelectionIconName } from "./selection-icons";
+import { attachSelectionMirror } from "./selection-mirror";
 
 import "./selection-menu.scss";
 
@@ -49,6 +52,14 @@ export interface SelectionMenuOptions {
   thinking?: boolean;
   /** Geometry, from settings. */
   place?: PlacementOptions;
+  /**
+   * The DOM range the selection occupied, captured while it was live.
+   *
+   * Clicking this bar's field collapses that selection, so the range is the
+   * only thing left that can say what is being replaced — the bar mirrors it
+   * for as long as it is open.
+   */
+  domRange?: Range;
   /** Document to attach to. Defaults to the global document. */
   doc?: Document;
 }
@@ -61,7 +72,7 @@ export interface SelectionMenuOptions {
  *   rect to anchor to.
  */
 export function attachSelectionMenu(options: SelectionMenuOptions): SelectionMenuHandle | null {
-  const { doc = document, onRun, place, presets, selection, thinking = false } = options;
+  const { doc = document, domRange, onRun, place, presets, selection, thinking = false } = options;
   const { rect } = selection;
 
   // A selection with no box cannot be anchored to; fail to "no menu" rather
@@ -76,12 +87,17 @@ export function attachSelectionMenu(options: SelectionMenuOptions): SelectionMen
   // action can read it.
   menu.addEventListener("mousedown", (event) => event.preventDefault());
 
+  // The selection is gone the moment anything else takes focus; this keeps it
+  // visible so "what is being replaced" stays answerable.
+  const mirror = domRange ? attachSelectionMirror(domRange, doc) : null;
+
   let live = true;
   let busy = false;
   const remove = (): void => {
     if (!live) return;
     live = false;
     detach();
+    mirror?.();
     menu.remove();
   };
   const setBusy = (next: boolean): void => {
@@ -114,9 +130,9 @@ export function attachSelectionMenu(options: SelectionMenuOptions): SelectionMen
     button.type = "button";
     button.className = `${SELECTION_MENU_CLASS}-action`;
     button.dataset.action = preset.id;
-    // A glyph, with the full label on hover — six words made the bar wide
-    // enough to cover the text it acts on.
-    button.textContent = preset.glyph;
+    // The reference implementation's icon, with the full label on hover — six
+    // words made the bar wide enough to cover the text it acts on.
+    button.append(iconSvg(doc, preset.icon as SelectionIconName));
     button.title = preset.label;
     button.addEventListener("click", () => run(preset.instruction));
     menu.append(button);
@@ -142,7 +158,7 @@ export function attachSelectionMenu(options: SelectionMenuOptions): SelectionMen
   think.type = "button";
   think.className = `${SELECTION_MENU_CLASS}-action ${SELECTION_MENU_CLASS}-think`;
   think.dataset.role = "thinking";
-  think.textContent = "Think";
+  think.append(iconSvg(doc, "brain"));
   const label = (): void => {
     think.classList.toggle(`${SELECTION_MENU_CLASS}-think-on`, wantsThinking);
     think.title =
