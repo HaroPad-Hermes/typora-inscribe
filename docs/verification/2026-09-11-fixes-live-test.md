@@ -243,7 +243,7 @@ ambiguity in this loop.
 
 ---
 
-## Post-run follow-up — what changed after this verification
+## Post-run follow-up — what changed after this verification (commit `5130fb8`)
 
 The three new findings are handled as follows. This section is for whoever next touches
 `caret.ts` or `preview-text.ts`.
