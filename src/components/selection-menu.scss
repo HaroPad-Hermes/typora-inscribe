@@ -34,6 +34,33 @@
   cursor: pointer;
 }
 
+.inscribe-selection-menu-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 0 3px;
+  background: var(--border-color, #d0d0d0);
+}
+
+.inscribe-selection-menu-input {
+  min-width: 150px;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  outline: none;
+}
+
+.inscribe-selection-menu-input::placeholder {
+  opacity: 0.5;
+}
+
+.inscribe-selection-menu-think-on {
+  background: var(--active-file-bg-color, rgb(124 128 255 / 16%));
+  font-weight: 600;
+}
+
 .inscribe-selection-menu-action:hover,
 .inscribe-selection-menu-action:focus-visible {
   background: var(--active-file-bg-color, rgb(124 128 255 / 16%));

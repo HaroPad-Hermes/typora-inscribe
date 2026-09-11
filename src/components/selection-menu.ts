@@ -1,94 +1,72 @@
 /**
- * The floating action menu for a text selection.
+ * The floating action bar for a selection.
  *
- * Typora has no selection-menu primitive, so this is a `position: fixed`
- * element anchored to the selection's rect — the same family of placement the
- * inline ghost and the suggestion panel use. Absolute positioning inside the
- * editor's scroll container was tried for the ghost and failed (the container
- * is not the offset parent Typora's layout suggests), so this does not repeat
- * that mistake.
+ * The shape is the reference implementation's (`obsidian-inscribe`'s selection
+ * bar): the preset operations, a divider, an "Ask AI anything…" field, another
+ * divider, and a thinking toggle at the end. An action either runs a preset's
+ * instruction or the text the user typed, and the toggle decides whether that
+ * one request is allowed to reason.
  *
- * Two properties are load-bearing:
- *   - the menu is dismissed on scroll rather than repositioned, because a menu
- *     that silently drifts away from the text it acts on is worse than no menu;
- *   - a button's `mousedown` is defaulted away, so opening the menu does not
- *     collapse the selection the action is about to act on.
+ * Deliberately opaque. A translucent backdrop lets the document read through the
+ * buttons, which makes the bar look broken and its labels unreadable over bold
+ * or coloured text.
  *
- * The menu is registered in `INSCRIBE_UI_SELECTOR`, so selecting its own label
- * never reads back as a document selection.
+ * Three rules the bar has to keep, all of them from the reference and all of
+ * them load-bearing:
+ *   - the bar's own `mousedown` is defaulted away, or clicking a button collapses
+ *     the selection the action is about to read;
+ *   - the text field stops propagation, so typing in it never reaches the editor;
+ *   - Escape and a click outside dismiss it (see `attachDismissal`).
  */
 
+import type { SelectionAction } from "../selection/actions";
 import type { SelectedText } from "../selection/selection";
 
-import "./selection-menu.scss";
-
+import type { PlacementOptions } from "./floating";
 import { placeNear } from "./floating";
 import { attachDismissal } from "./floating-dismiss";
 
+import "./selection-menu.scss";
+
 export const SELECTION_MENU_CLASS = "inscribe-selection-menu";
 
-export interface SelectionMenuAction {
-  /** Stable identifier, used for the button's `data-action`. */
-  id: string;
-  /** Button label. */
-  label: string;
-  /** Called with the selection the menu was opened for. */
-  onSelect: (selection: SelectedText) => void;
-}
-
-export interface AttachSelectionMenuOptions {
-  /** The selection to act on; its rect anchors the menu. */
+export interface SelectionMenuOptions {
+  /** The selection to act on; its rect anchors the bar. */
   selection: SelectedText;
-  /** Actions to offer, in display order. */
-  actions: SelectionMenuAction[];
+  /** The preset operations to offer, in display order. */
+  presets: SelectionAction[];
+  /** Called with the instruction (a preset's, or one the user typed) and the thinking state. */
+  onRun: (instruction: string, thinking: boolean) => void;
+  /** Initial thinking state; the toggle flips it per invocation. */
+  thinking?: boolean;
+  /** Geometry, from settings. */
+  place?: PlacementOptions;
   /** Document to attach to. Defaults to the global document. */
   doc?: Document;
-  /** Right edge of the text field, so the bar can pull in rather than overhang it. */
-  boundaryRight?: number;
 }
 
 /**
- * Show the action menu for a selection.
+ * Show the action bar for a selection.
  *
- * @param options - The selection, the actions to offer and an optional document.
- * @returns A function that removes the menu and its listeners, or null when the
- *   selection has no measurable rect to anchor to (the caller decides whether
- *   that is worth logging).
+ * @param options - Selection, presets, the run handler and geometry.
+ * @returns A function that removes the bar and its listeners, or null when the
+ *   selection has no measurable rect to anchor to.
  */
-export function attachSelectionMenu(options: AttachSelectionMenuOptions): (() => void) | null {
-  const { actions, boundaryRight, doc = document, selection } = options;
+export function attachSelectionMenu(options: SelectionMenuOptions): (() => void) | null {
+  const { doc = document, onRun, place, presets, selection, thinking = false } = options;
   const { rect } = selection;
 
   // A selection with no box cannot be anchored to; fail to "no menu" rather
-  // than pinning the menu to the corner of the window.
+  // than pinning the bar to the corner of the window.
   if (rect.width === 0 && rect.height === 0) return null;
 
   const menu = doc.createElement("div");
   menu.className = SELECTION_MENU_CLASS;
-  menu.setAttribute("role", "menu");
+  menu.setAttribute("role", "toolbar");
   menu.setAttribute("aria-label", "Inscribe");
-
-  for (const action of actions) {
-    const button = doc.createElement("button");
-    button.type = "button";
-    button.className = `${SELECTION_MENU_CLASS}-action`;
-    button.dataset.action = action.id;
-    button.textContent = action.label;
-    // Keep the selection alive: without this the click collapses it before
-    // `onSelect` can read it.
-    button.addEventListener("mousedown", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-    });
-    button.addEventListener("click", () => {
-      remove();
-      action.onSelect(selection);
-    });
-    menu.appendChild(button);
-  }
-
-  placeNear(menu, rect, doc.defaultView, { boundaryRight });
-  doc.body.appendChild(menu);
+  // Keep the selection alive: without this a click collapses it before the
+  // action can read it.
+  menu.addEventListener("mousedown", (event) => event.preventDefault());
 
   let live = true;
   const remove = (): void => {
@@ -97,6 +75,72 @@ export function attachSelectionMenu(options: AttachSelectionMenuOptions): (() =>
     detach();
     menu.remove();
   };
+
+  // One state for the bar: the toggle and every run read the same value.
+  let wantsThinking = thinking;
+  const run = (instruction: string): void => {
+    remove();
+    onRun(instruction, wantsThinking);
+  };
+
+  const divider = (): HTMLElement => {
+    const span = doc.createElement("span");
+    span.className = `${SELECTION_MENU_CLASS}-divider`;
+    return span;
+  };
+
+  for (const preset of presets) {
+    const button = doc.createElement("button");
+    button.type = "button";
+    button.className = `${SELECTION_MENU_CLASS}-action`;
+    button.dataset.action = preset.id;
+    button.textContent = preset.short;
+    button.title = preset.label;
+    button.addEventListener("click", () => run(preset.instruction));
+    menu.append(button);
+  }
+
+  menu.append(divider());
+
+  const input = doc.createElement("input");
+  input.type = "text";
+  input.className = `${SELECTION_MENU_CLASS}-input`;
+  input.placeholder = "Ask AI anything…";
+  input.addEventListener("mousedown", (event) => event.stopPropagation());
+  input.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key === "Enter" && input.value.trim()) run(input.value.trim());
+    if (event.key === "Escape") remove();
+  });
+  menu.append(input);
+
+  menu.append(divider());
+
+  const think = doc.createElement("button");
+  think.type = "button";
+  think.className = `${SELECTION_MENU_CLASS}-action ${SELECTION_MENU_CLASS}-think`;
+  think.dataset.role = "thinking";
+  think.textContent = "Think";
+  const label = (): void => {
+    think.classList.toggle(`${SELECTION_MENU_CLASS}-think-on`, wantsThinking);
+    think.title =
+      wantsThinking ?
+        "Thinking ON: this request may reason before answering (slower, and a long passage can exhaust the budget)"
+      : "Thinking OFF: answer directly (recommended for DeepSeek V4 Flash)";
+  };
+  label();
+  think.addEventListener("click", () => {
+    wantsThinking = !wantsThinking;
+    label();
+  });
+  menu.append(think);
+
+  placeNear(menu, rect, doc.defaultView, place);
+  doc.body.appendChild(menu);
+  // Focus the field so typing lands in the bar, not the document — the
+  // reference implementation's behavior, and the only way "Ask AI anything…"
+  // is usable without a second click.
+  input.focus();
 
   const detach = attachDismissal({ doc, element: menu, onDismiss: remove });
 

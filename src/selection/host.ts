@@ -1,39 +1,32 @@
 /**
- * The selection action host: menu, model, preview, accepted edit.
+ * The selection action host: bar, model, preview, accepted edit.
  *
- * This is the only place the three pieces meet, and it is deliberately thin —
- * every decision it could get wrong lives in a tested module beside it:
- * `selection.ts` says what is selected (or names why it cannot tell),
- * `range.ts` maps that to a markdown span (or names which endpoint failed),
- * `actions.ts` holds the prompts, `edit-plan.ts` decides whether an answer can
- * be applied at all, and `selection-preview.ts` collects the consent.
- *
- * What is left here is glue and two rules worth stating:
+ * This is the only place the pieces meet, and it stays thin — every decision it
+ * could get wrong lives in a tested module beside it. What is left here is glue
+ * plus four rules worth stating:
  *
  *   - an edit is applied to the document the user can see RIGHT NOW. The
- *     markdown and the range are read again at apply time, not carried over
- *     from when the menu opened, because a reload of stale text would silently
- *     revert anything typed in between;
+ *     markdown and the range are read again at run time, not carried over from
+ *     when the bar opened, because reloading stale text would silently revert
+ *     anything typed in between;
  *   - nothing is applied without an accept. A refusal is logged and left
- *     visible; it is never turned into a best guess.
+ *     visible; it is never turned into a best guess;
+ *   - the request is the reference implementation's shape: the selection is
+ *     MARKED, its neighbours are tagged context, and `thinking` is off unless
+ *     the bar's toggle says otherwise;
+ *   - the bar appears only once the selection has settled (the reference's
+ *     350ms debounce), so it never chases the drag.
  */
 
 import { attachSelectionMenu } from "../components/selection-menu";
-import type { SelectionMenuAction } from "../components/selection-menu";
 import { attachEditPreview } from "../components/selection-preview";
 import { diagLog } from "../diag";
 import { OpenAICompatibleProvider } from "../providers/openai-compat";
 import type { ChatMessage, GenerateOnceOptions } from "../providers/provider";
 import { settings } from "../settings";
 
-import {
-  SELECTION_ACTIONS,
-  SELECTION_MAX_TOKENS,
-  buildSelectionMessages,
-  findAction,
-} from "./actions";
-import type { SelectionAction } from "./actions";
-import { caretAfter, describeEditRefusal, planEdit } from "./edit-plan";
+import { SELECTION_MAX_TOKENS, SELECTION_PRESETS, buildRewriteMessages } from "./actions";
+import { caretAfter, describeEditRefusal, offsetAt, planEdit } from "./edit-plan";
 import type { EditPlan } from "./edit-plan";
 import { describeRangeRefusal, selectionRange } from "./range";
 import { describeRefusal, readSelection, selectionSignature } from "./selection";
@@ -41,6 +34,8 @@ import type { SelectedText } from "./selection";
 
 /** The plugin's own UI must never be read as document text. */
 const INSIDE_OUR_UI = "inside-inscribe-ui";
+/** How long the selection must be still before the bar appears. */
+const SHOW_DELAY_MS = 350;
 
 export interface SelectionHostOptions {
   /**
@@ -62,6 +57,7 @@ export function attachSelectionActions(options: SelectionHostOptions = {}): () =
   let detachMenu: (() => void) | null = null;
   let lastSignature = "";
   let inFlight = false;
+  let showTimer: number | null = null;
 
   const editorNow = (): Typora.EnhancedEditor | null =>
     (Files.editor as Typora.EnhancedEditor | undefined) ?? null;
@@ -81,8 +77,6 @@ export function attachSelectionActions(options: SelectionHostOptions = {}): () =
       });
       const caret = caretAfter(plan.range, plan.replacement);
       const lineText = plan.after.split(eol)[caret.line] ?? "";
-      // `main.ts` calls both directly after a reload; the types declare them
-      // non-optional, so no defensive chain here either.
       editor.sourceView.gotoLine({ line: caret.line, ch: caret.character, lineText });
       editor.refocus();
       diagLog(
@@ -96,11 +90,12 @@ export function attachSelectionActions(options: SelectionHostOptions = {}): () =
     }
   };
 
-  const runAction = (action: SelectionAction, selection: SelectedText): void => {
+  const run = (instruction: string, thinking: boolean, selection: SelectedText): void => {
     if (inFlight) return;
     const editor = editorNow();
     if (!editor) return;
 
+    const eol = Files.useCRLF ? "\r\n" : "\n";
     const markdown = editor.getMarkdown();
     const mapping = selectionRange({
       writingArea: editor.writingArea,
@@ -114,31 +109,49 @@ export function attachSelectionActions(options: SelectionHostOptions = {}): () =
       return;
     }
 
+    const start = offsetAt(markdown, mapping.range.start, eol);
+    const end = offsetAt(markdown, mapping.range.end, eol);
     inFlight = true;
-    diagLog(`selection action ${action.id}: ${JSON.stringify(selection.text.slice(0, 40))}`);
-    void generate(buildSelectionMessages(action, selection.text), {
-      model: settings.model,
-      maxTokens: SELECTION_MAX_TOKENS,
-      temperature: settings.temperature,
-    })
+    diagLog(
+      `selection action ${JSON.stringify(instruction.slice(0, 40))} thinking=${String(thinking)}: ` +
+        JSON.stringify(selection.text.slice(0, 40)),
+    );
+    void generate(
+      buildRewriteMessages({
+        instruction,
+        selection: selection.text,
+        before: markdown.slice(0, Math.max(0, start)),
+        after: markdown.slice(Math.max(0, end)),
+      }),
+      {
+        model: settings.model,
+        maxTokens: SELECTION_MAX_TOKENS,
+        temperature: settings.temperature,
+        thinking: thinking ? "enabled" : "disabled",
+      },
+    )
       .then((answer) => {
         const planned = planEdit({
           markdown: editorNow()?.getMarkdown() ?? markdown,
           range: mapping.range,
           passage: selection.text,
           answer,
-          eol: Files.useCRLF ? "\r\n" : "\n",
+          eol,
         });
         if (!planned.ok) {
-          diagLog(`selection edit refused: ${describeEditRefusal(planned.reason)}`);
+          const hint =
+            planned.reason === "empty-output" && thinking ?
+              " (thinking spent the budget — try the Think toggle off)"
+            : "";
+          diagLog(`selection edit refused: ${describeEditRefusal(planned.reason)}${hint}`);
           return;
         }
         attachEditPreview({
           rect: selection.rect,
-          title: action.label,
-          boundaryRight: editorNow()?.writingArea.getBoundingClientRect().right,
+          title: instruction.slice(0, 40),
           passage: planned.plan.before,
           replacement: planned.plan.replacement,
+          boundaryRight: undefined,
           onAccept: () => applyEdit(planned.plan),
         });
       })
@@ -150,46 +163,66 @@ export function attachSelectionActions(options: SelectionHostOptions = {}): () =
       });
   };
 
-  const menuActions: SelectionMenuAction[] = SELECTION_ACTIONS.map((action) => ({
-    id: action.id,
-    label: action.label,
-    onSelect: (selection) => {
-      const found = findAction(action.id);
-      if (found) runAction(found, selection);
-    },
-  }));
-
   const offerMenu = (): void => {
-    const editor = editorNow();
-    if (!editor) return;
-    const read = readSelection({
-      writingArea: editor.writingArea,
-      selection: window.getSelection(),
-    });
-    if (!read.ok) {
-      // A click inside our own UI, or a fresh caret, both retire the menu.
+    if (showTimer !== null) window.clearTimeout(showTimer);
+    showTimer = window.setTimeout(() => {
+      showTimer = null;
+      const editor = editorNow();
+      if (!editor) return;
+      const read = readSelection({
+        writingArea: editor.writingArea,
+        selection: window.getSelection(),
+      });
+      if (!read.ok) {
+        // A click inside our own UI, or a fresh caret, both retire the bar.
+        detachMenu?.();
+        detachMenu = null;
+        lastSignature = "";
+        if (read.reason !== "collapsed" && read.reason !== INSIDE_OUR_UI)
+          diagLog(`selection menu: ${describeRefusal(read.reason)}`);
+        return;
+      }
+      const signature = selectionSignature(read.selection);
+      if (signature === lastSignature) return;
+      lastSignature = signature;
       detachMenu?.();
-      detachMenu = null;
-      lastSignature = "";
-      if (read.reason !== "collapsed" && read.reason !== INSIDE_OUR_UI)
-        diagLog(`selection menu: ${describeRefusal(read.reason)}`);
-      return;
-    }
-    const signature = selectionSignature(read.selection);
-    if (signature === lastSignature) return;
-    lastSignature = signature;
-    detachMenu?.();
-    detachMenu = attachSelectionMenu({
-      selection: read.selection,
-      actions: menuActions,
-      boundaryRight: editor.writingArea.getBoundingClientRect().right,
-    });
+
+      // Whether the selection spans lines picks the horizontal anchor in "smart"
+      // mode, and the DOM cannot answer it — a soft-wrapped line has no newline
+      // in it. Mapping here answers it, and the run-time mapping stays the
+      // authority on what is actually replaced.
+      const field = editor.writingArea.getBoundingClientRect();
+      const probing = selectionRange({
+        writingArea: editor.writingArea,
+        selection: window.getSelection(),
+        markdown: editor.getMarkdown(),
+        expectedText: read.selection.text,
+        log: diagLog,
+      });
+      detachMenu = attachSelectionMenu({
+        selection: read.selection,
+        presets: SELECTION_PRESETS,
+        onRun: (instruction, thinking) => run(instruction, thinking, read.selection),
+        // The toggle starts where the setting is, so its state is never a lie.
+        thinking: !settings.disableThinking,
+        place: {
+          gap: settings.selectionMenuGap,
+          placement: settings.selectionMenuPlacement,
+          side: settings.selectionMenuSide,
+          pullIn: settings.selectionMenuPullIn,
+          boundaryRight: field.right,
+          contentLeft: field.left,
+          multiLine: probing.ok && probing.range.start.line !== probing.range.end.line,
+        },
+      });
+    }, SHOW_DELAY_MS);
   };
 
   document.addEventListener("mouseup", offerMenu, true);
   document.addEventListener("selectionchange", offerMenu, true);
 
   return () => {
+    if (showTimer !== null) window.clearTimeout(showTimer);
     document.removeEventListener("mouseup", offerMenu, true);
     document.removeEventListener("selectionchange", offerMenu, true);
     detachMenu?.();

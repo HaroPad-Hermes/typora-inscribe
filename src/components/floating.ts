@@ -1,16 +1,15 @@
 /**
  * Placement shared by the plugin's floating surfaces.
  *
- * The selection menu and the edit preview both anchor to a rect in a document
- * that scrolls under them, so both need the same two decisions: keep the
- * surface inside the viewport, and prefer the space above the anchor. Keeping
- * one implementation means a fix to the geometry cannot land on one surface and
- * miss the other.
+ * The geometry is the reference implementation's (`obsidian-inscribe`'s
+ * selection bar): a horizontal anchor chosen by mode, a side that flips only
+ * when the preferred one has no room, and — when pull-in is on — a soft shift
+ * left by HALF the overhang past the text field's edge instead of a hard clamp.
+ * A bar that jumps its whole width at the boundary reads as a glitch; half the
+ * overflow keeps it visually attached to the text it acts on.
  *
- * Anchoring is `position: fixed` against the rect. Absolute positioning inside
- * the editor's scroll container was tried for the inline ghost and failed (the
- * container is not the offset parent Typora's layout suggests), so nothing here
- * retries it.
+ * The selection menu and the edit preview share this, so a geometry fix cannot
+ * land on one surface and miss the other.
  */
 
 export interface AnchorRect {
@@ -20,39 +19,67 @@ export interface AnchorRect {
   height: number;
 }
 
-/** Vertical gap between the anchor and the surface. */
-const DEFAULT_GAP = 10;
-/** Keep this far from the viewport edges. */
-const DEFAULT_MARGIN = 8;
-/** Used before layout exists, and in tests where nothing is laid out. */
-const FALLBACK_WIDTH = 200;
-const FALLBACK_HEIGHT = 32;
+/** Where the surface's left edge sits relative to the selection. */
+export type MenuPlacement = "smart" | "centered" | "first";
+/** Which side of the selection it prefers. */
+export type MenuSide = "below" | "above";
 
 export interface PlacementOptions {
-  /** Vertical distance from the anchor. Defaults to 10. */
+  /** Vertical distance from the anchor. */
   gap?: number;
-  /** Minimum distance from the viewport edges. Defaults to 8. */
+  /** Minimum distance from the edges. */
   margin?: number;
-  /** Sit under the anchor, flipping above only when below does not fit. Defaults to true. */
-  preferBelow?: boolean;
-  /**
-   * Right edge of the text field the anchor lives in.
-   *
-   * The surface shifts left by HALF the distance it would overhang this edge,
-   * rather than being clamped hard against it: a menu that jumps a whole width
-   * at the boundary reads as a glitch, and half the overflow keeps it visually
-   * attached to the text it acts on.
-   */
+  /** Horizontal anchor mode. Defaults to "smart". */
+  placement?: MenuPlacement;
+  /** Left edge of the text field, for the "smart" mode on multi-line selections. */
+  contentLeft?: number;
+  /** Whether the selection covers more than one visual line. */
+  multiLine?: boolean;
+  /** Preferred side. Defaults to "below". */
+  side?: MenuSide;
+  /** Shift left by half the overhang past `boundaryRight`. Defaults to true. */
+  pullIn?: boolean;
+  /** Right edge of the text field. */
   boundaryRight?: number;
 }
+
+/** Used before layout exists, and in tests where nothing is laid out. */
+const FALLBACK_WIDTH = 260;
+const FALLBACK_HEIGHT = 34;
+
 /**
- * Position `element` against `rect`, above it when there is room.
+ * Resolve the surface's preferred left edge.
+ *
+ * @param placement - The chosen mode.
+ * @param rect - The anchor's rect.
+ * @param contentLeft - The text field's left edge.
+ * @param multiLine - Whether the selection spans more than one line.
+ * @param menuWidth - The surface's width.
+ * @param margin - The minimum edge margin.
+ * @returns The left edge before clamping.
+ */
+export function resolveMenuLeft(
+  placement: MenuPlacement,
+  rect: AnchorRect,
+  contentLeft: number,
+  multiLine: boolean,
+  menuWidth: number,
+  margin: number,
+): number {
+  if (placement === "centered") return rect.left + rect.width / 2 - menuWidth / 2;
+  if (placement === "first") return rect.left;
+  // smart: hug the first character on one line, the field's edge on many — a
+  // multi-line selection's leftmost character is not where the eye expects a bar.
+  return multiLine ? contentLeft : rect.left;
+}
+
+/**
+ * Position a floating element against an anchor rect, in viewport coordinates.
  *
  * @param element - The floating element to place.
- * @param rect - The anchor's rect, in viewport coordinates.
+ * @param rect - The anchor's rect.
  * @param view - The window, for viewport bounds. Null is tolerated (tests).
- * @param gap - Vertical distance from the anchor. Defaults to 6.
- * @param margin - Minimum distance from the viewport edges. Defaults to 8.
+ * @param options - Geometry options; defaults mirror the reference settings.
  */
 export function placeNear(
   element: HTMLElement,
@@ -60,38 +87,44 @@ export function placeNear(
   view: Window | null,
   options: PlacementOptions = {},
 ): void {
-  const { boundaryRight, gap = DEFAULT_GAP, margin = DEFAULT_MARGIN, preferBelow = true } = options;
+  const {
+    boundaryRight,
+    contentLeft = rect.left,
+    gap = 10,
+    margin = 8,
+    multiLine = false,
+    placement = "smart",
+    pullIn = true,
+    side = "below",
+  } = options;
+
   const width = element.offsetWidth || FALLBACK_WIDTH;
   const height = element.offsetHeight || FALLBACK_HEIGHT;
   const viewportWidth = view?.innerWidth ?? 0;
   const viewportHeight = view?.innerHeight ?? 0;
 
-  // Horizontal: pull in by half the overflow past the field edge, then keep the
-  // result inside the viewport. Never a hard jump to the margin.
-  const limit =
-    viewportWidth > 0 ?
-      Math.min(boundaryRight ?? viewportWidth, viewportWidth) - margin
-    : Number.POSITIVE_INFINITY;
-  const overflow = rect.left + width - limit;
-  const pulled = overflow > 0 ? rect.left - overflow / 2 : rect.left;
-  const maxLeft = viewportWidth > 0 ? Math.max(margin, viewportWidth - width - margin) : pulled;
-  const left = viewportWidth > 0 ? Math.min(Math.max(pulled, margin), maxLeft) : pulled;
+  let left = resolveMenuLeft(placement, rect, contentLeft, multiLine, width, margin);
+  if (pullIn) {
+    const limit = (boundaryRight ?? viewportWidth) - margin;
+    const overflow = left + width - limit;
+    if (overflow > 0) left -= overflow / 2;
+  }
+  left = Math.max(margin, left);
+  if (viewportWidth > 0) left = Math.min(left, Math.max(margin, viewportWidth - width - margin));
 
-  // Vertical: below by default, above when below does not fit, and whichever side
-  // has room when neither does perfectly.
   const below = rect.top + rect.height + gap;
   const above = rect.top - height - gap;
   const fitsBelow = viewportHeight === 0 || below + height + margin <= viewportHeight;
   const fitsAbove = above >= margin;
   const top =
-    preferBelow ?
-      fitsBelow || !fitsAbove ?
-        below
-      : above
-    : fitsAbove || !fitsBelow ? above
-    : below;
+    side === "above" ?
+      fitsAbove || !fitsBelow ?
+        above
+      : below
+    : fitsBelow || !fitsAbove ? below
+    : above;
 
   element.style.position = "fixed";
   element.style.left = `${Math.round(left)}px`;
-  element.style.top = `${Math.round(top)}px`;
+  element.style.top = `${Math.round(Math.max(margin, top))}px`;
 }

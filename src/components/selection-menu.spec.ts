@@ -1,161 +1,140 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { SelectedText, SelectionRect } from "../selection/selection";
+import type { SelectionAction } from "../selection/actions";
+import { SELECTION_PRESETS } from "../selection/actions";
 
 import { SELECTION_MENU_CLASS, attachSelectionMenu } from "./selection-menu";
 
+const RECT = { left: 100, top: 200, width: 80, height: 18 };
+const SELECTION = { text: "the cat sat", rect: RECT, block: null };
+
+const PRESETS: SelectionAction[] = [
+  { id: "rephrase", label: "Rephrase", short: "Rephrase", instruction: "Rephrase it." },
+  { id: "shorten", label: "Shorten a lot", short: "Shorten", instruction: "Shorten it." },
+];
+
 /**
- * A selection with the given rect; the text is irrelevant to placement.
+ * The bar currently in the document, if any.
  *
- * @param rect - The rect the menu should anchor to.
- * @returns A selection carrying that rect.
+ * @returns The bar element, or null.
  */
-function selectionAt(rect: SelectionRect): SelectedText {
-  return { block: null, rect, text: "brave world" };
+const bar = (): HTMLElement | null => document.querySelector(`.${SELECTION_MENU_CLASS}`);
+
+/**
+ * Attach a bar over the presets, with a spy for the run handler.
+ *
+ * @param overrides - Options to override.
+ * @returns The remover and the spy.
+ */
+function attach(overrides: Record<string, unknown> = {}) {
+  const onRun = vi.fn();
+  const remove = attachSelectionMenu({
+    selection: SELECTION,
+    presets: PRESETS,
+    onRun,
+    ...overrides,
+  });
+  return { onRun, remove };
 }
 
-const CENTRED = selectionAt({ height: 18, left: 100, top: 200, width: 80 });
-
-/**
- * Two actions, so ordering and wiring can both be asserted.
- *
- * @param spy - Sink for the action that gets chosen.
- * @returns The action list.
- */
-function actions(spy: (s: SelectedText) => void = () => {}) {
-  return [
-    { id: "explain", label: "Explain", onSelect: spy },
-    { id: "rewrite", label: "Rewrite", onSelect: spy },
-  ];
-}
-
-/**
- * The window the document actually belongs to.
- *
- * The test harness installs a second `Window` over the global `window`, so
- * `document.defaultView !== window` here. Production has one window; this keeps
- * the spec dispatching on the one the menu listened to.
- *
- * @returns The document's own window.
- */
-const ownerWindow = (): Window => document.defaultView!;
-
-const menuIn = (): HTMLElement | null => document.querySelector(`.${SELECTION_MENU_CLASS}`);
-
-beforeEach(() => {
+afterEach(() => {
   document.body.innerHTML = "";
 });
 
 describe("attachSelectionMenu", () => {
-  it("offers one button per action, in order", () => {
-    attachSelectionMenu({ actions: actions(), selection: CENTRED });
-    const buttons = Array.from(document.querySelectorAll(`.${SELECTION_MENU_CLASS}-action`));
-    expect(buttons.map((b) => b.textContent)).toEqual(["Explain", "Rewrite"]);
-    expect(buttons.map((b) => (b as HTMLElement).dataset.action)).toEqual(["explain", "rewrite"]);
+  it("offers a button per preset, an ask field and a thinking toggle", () => {
+    attach();
+    const buttons = Array.from(bar()!.querySelectorAll(`.${SELECTION_MENU_CLASS}-action`));
+    expect(buttons.map((b) => b.getAttribute("data-action"))).toEqual([
+      "rephrase",
+      "shorten",
+      null,
+    ]);
+    expect(buttons[0]!.textContent).toBe("Rephrase");
+    expect(buttons[0]!.title).toBe("Rephrase");
+    expect(bar()!.querySelector(`.${SELECTION_MENU_CLASS}-input`)).not.toBeNull();
+    expect(bar()!.querySelector("[data-role='thinking']")).not.toBeNull();
+    expect(bar()!.querySelectorAll(`.${SELECTION_MENU_CLASS}-divider`)).toHaveLength(2);
   });
 
-  it("refuses to attach when the selection has no measurable box", () => {
-    const detach = attachSelectionMenu({
-      actions: actions(),
-      selection: selectionAt({ height: 0, left: 0, top: 0, width: 0 }),
-    });
-    expect(detach).toBeNull();
-    expect(menuIn()).toBeNull();
+  it("runs the preset's instruction, then closes", () => {
+    const { onRun } = attach();
+    bar()!.querySelector<HTMLButtonElement>("[data-action='shorten']")!.click();
+    expect(onRun).toHaveBeenCalledWith("Shorten it.", false);
+    expect(bar()).toBeNull();
   });
 
-  it("anchors below the selection by default", () => {
-    // Below, not above: a bar under the text it acts on is the behaviour the
-    // settings describe as "Below", and it is the shipped default.
-    attachSelectionMenu({ actions: actions(), selection: CENTRED });
-    const menu = menuIn()!;
-    expect(menu.style.top).toBe(`${CENTRED.rect.top + CENTRED.rect.height + 10}px`);
-    expect(Number.parseFloat(menu.style.top)).toBeGreaterThan(CENTRED.rect.top);
+  it("runs what the user typed, then closes", () => {
+    const { onRun } = attach();
+    const input = bar()!.querySelector<HTMLInputElement>(`.${SELECTION_MENU_CLASS}-input`)!;
+    input.value = "make it sound Swedish";
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+    expect(onRun).toHaveBeenCalledWith("make it sound Swedish", false);
+    expect(bar()).toBeNull();
   });
 
-  it("flips above the selection when below does not fit", () => {
-    const view = document.defaultView!;
-    const nearBottom = selectionAt({
-      height: 18,
-      left: 60,
-      top: view.innerHeight - 30,
-      width: 80,
-    });
-    attachSelectionMenu({ actions: actions(), selection: nearBottom });
-    expect(Number.parseFloat(menuIn()!.style.top)).toBeLessThan(nearBottom.rect.top);
+  it("ignores an empty ask", () => {
+    const { onRun } = attach();
+    const input = bar()!.querySelector<HTMLInputElement>(`.${SELECTION_MENU_CLASS}-input`)!;
+    input.value = "   ";
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+    expect(onRun).not.toHaveBeenCalled();
+    expect(bar()).not.toBeNull();
   });
 
-  it("clamps to the left margin instead of overflowing the viewport", () => {
-    attachSelectionMenu({
-      actions: actions(),
-      selection: selectionAt({ height: 18, left: 0, top: 200, width: 80 }),
-    });
-    expect(menuIn()!.style.left).toBe("8px");
+  it("passes the thinking toggle's state to the run", () => {
+    const { onRun } = attach({ thinking: false });
+    const think = bar()!.querySelector<HTMLButtonElement>("[data-role='thinking']")!;
+    expect(think.title).toContain("OFF");
+    think.click();
+    expect(think.title).toContain("ON");
+    bar()!.querySelector<HTMLButtonElement>("[data-action='rephrase']")!.click();
+    expect(onRun).toHaveBeenCalledWith("Rephrase it.", true);
   });
 
-  it("clamps to the right edge instead of overflowing the viewport", () => {
-    attachSelectionMenu({
-      actions: actions(),
-      selection: selectionAt({ height: 18, left: 5000, top: 200, width: 80 }),
-    });
-    // 1024 (happy-dom's default width) - 200 (fallback) - 8
-    expect(menuIn()!.style.left).toBe("816px");
+  it("starts the toggle where the setting is, so its state is never a lie", () => {
+    attach({ thinking: true });
+    expect(bar()!.querySelector("[data-role='thinking']")!.className).toContain("think-on");
   });
 
-  it("runs the action for the selection it was opened for, then closes", () => {
-    const spy = vi.fn();
-    attachSelectionMenu({ actions: actions(spy), selection: CENTRED });
-    document.querySelector<HTMLButtonElement>('[data-action="rewrite"]')!.click();
-    expect(spy).toHaveBeenCalledExactlyOnceWith(CENTRED);
-    expect(menuIn()).toBeNull();
-  });
-
-  it("keeps the selection alive by defaulting the button's mousedown away", () => {
-    attachSelectionMenu({ actions: actions(), selection: CENTRED });
-    const button = document.querySelector<HTMLButtonElement>(`[data-action="explain"]`)!;
+  it("defaults the bar's own mousedown away, keeping the selection alive", () => {
+    attach();
     const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
-    button.dispatchEvent(event);
+    bar()!.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
-    expect(menuIn()).not.toBeNull();
   });
 
-  it("closes on Escape", () => {
-    attachSelectionMenu({ actions: actions(), selection: CENTRED });
+  it("dismisses on Escape, on a save, and on a click outside", () => {
+    attach();
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
-    expect(menuIn()).toBeNull();
-  });
+    expect(bar()).toBeNull();
 
-  it("closes on a save, so plugin UI is never up across Ctrl+S", () => {
-    attachSelectionMenu({ actions: actions(), selection: CENTRED });
-    document.dispatchEvent(new KeyboardEvent("keydown", { ctrlKey: true, key: "s" }));
-    expect(menuIn()).toBeNull();
-  });
+    attach();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true }));
+    expect(bar()).toBeNull();
 
-  it("closes on a mousedown outside it", () => {
-    attachSelectionMenu({ actions: actions(), selection: CENTRED });
+    attach();
     document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    expect(menuIn()).toBeNull();
+    expect(bar()).toBeNull();
   });
 
-  it("closes on scroll rather than drifting away from the text it acts on", () => {
-    attachSelectionMenu({ actions: actions(), selection: CENTRED });
-    ownerWindow().dispatchEvent(new Event("scroll"));
-    expect(menuIn()).toBeNull();
+  it("refuses an anchor with no measurable rect rather than pinning to a corner", () => {
+    const remove = attachSelectionMenu({
+      selection: { ...SELECTION, rect: { left: 0, top: 0, width: 0, height: 0 } },
+      presets: PRESETS,
+      onRun: vi.fn(),
+    });
+    expect(remove).toBeNull();
   });
 
-  it("closes on window blur", () => {
-    attachSelectionMenu({ actions: actions(), selection: CENTRED });
-    ownerWindow().dispatchEvent(new Event("blur"));
-    expect(menuIn()).toBeNull();
-  });
-
-  it("detaches idempotently and leaves no listeners behind", () => {
-    const detach = attachSelectionMenu({ actions: actions(), selection: CENTRED })!;
-    detach();
-    expect(menuIn()).toBeNull();
-    expect(() => detach()).not.toThrow();
-    // A second Escape must not throw once the listeners are gone.
-    expect(() =>
-      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })),
-    ).not.toThrow();
+  it("offers the shipping preset list", () => {
+    expect(SELECTION_PRESETS.map((preset) => preset.id)).toEqual([
+      "rephrase",
+      "shorten",
+      "expand",
+      "formal",
+      "grammar",
+      "latex",
+    ]);
   });
 });

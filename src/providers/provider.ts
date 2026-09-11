@@ -7,10 +7,23 @@ export interface ChatMessage {
   content: string;
 }
 
+/** DeepSeek V4 style reasoning control. */
+export type ThinkingMode = "enabled" | "disabled";
+
 export interface GenerateOnceOptions {
   model: string;
   maxTokens?: number;
   temperature?: number;
+  /**
+   * Per-request reasoning override; falls back to `settings.disableThinking`.
+   *
+   * This is not a nicety. Measured against the live endpoint, DeepSeek V4 Flash
+   * with thinking ON spends its whole budget on reasoning and returns EMPTY text
+   * with `finish_reason: length` on harder passages — the failure is
+   * budget-dependent, which is why easy rewrites worked and difficult ones did
+   * not. `thinking: {type: "disabled"}` is the fix.
+   */
+  thinking?: ThinkingMode;
 }
 
 export interface FimOnceOptions {

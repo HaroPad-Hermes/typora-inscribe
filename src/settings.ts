@@ -30,6 +30,15 @@ const defaultSettings = {
   // Manual trigger hotkey, e.g. "ctrl+space" — when set, auto-trigger is
   // disabled and this key fires a completion request on demand.
   triggerHotkey: "",
+  /* Selection menu geometry. Defaults match the reference implementation:
+   * below the selection, 10px gap, smart horizontal anchor, pull-in on. */
+  selectionMenuPlacement: "smart" as "smart" | "centered" | "first",
+  selectionMenuSide: "below" as "below" | "above",
+  selectionMenuPullIn: true,
+  selectionMenuGap: 10,
+  /* Send `thinking: {type: "disabled"}`. Required for DeepSeek V4 Flash, which
+   * otherwise spends the whole token budget on reasoning and returns no text. */
+  disableThinking: true,
 };
 
 export const settings = (() => {

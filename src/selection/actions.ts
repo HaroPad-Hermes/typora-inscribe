@@ -1,13 +1,21 @@
 /**
- * The actions the selection menu offers, and the prompts behind them.
+ * Selection actions: the presets, and the request they build.
  *
- * Each action sends the selected passage to the model and proposes the answer
- * as a REPLACEMENT for that passage: the menu edits the document, it does not
- * hold a conversation. That is why an action carries an instruction rather than
- * a chat prompt, and why the output rules are strict — a preamble or a wrapping
- * code fence would be inserted into the document verbatim.
+ * Modelled on the reference implementation (`obsidian-inscribe`), prompt shape
+ * and preset list included, because the rewrites are only as robust as the
+ * request. Three parts of that request each carry a lesson this port learned the
+ * hard way:
  *
- * The list is data. Adding an action is one entry, not a new code path.
+ *   - The selected text is MARKED (`<selected>`) and its neighbours are tagged
+ *     context (`<context_before>` / `<context_after>`). An earlier version of
+ *     this file repeated the passage under a "For context, it sits in:" heading
+ *     instead; measured live, that shape made the model reason without bound and
+ *     return EMPTY content.
+ *   - `thinking` is disabled by default. DeepSeek V4 Flash with reasoning on
+ *     spends its whole budget thinking on harder passages and returns nothing
+ *     (`finish_reason: "length"`, content `""`) — budget-dependent, which is why
+ *     easy rewrites worked and difficult ones quietly did not.
+ *   - The budget is 4000 tokens, because reasoning tokens count against it.
  */
 
 import type { ChatMessage } from "../providers/provider";
@@ -15,65 +23,114 @@ import type { ChatMessage } from "../providers/provider";
 export interface SelectionAction {
   /** Stable identifier, used for the button's `data-action`. */
   id: string;
-  /** Button label. */
+  /** Full label: the button's tooltip, and its name in settings. */
   label: string;
-  /** What the model is told to do with the passage. */
+  /** Compact label for the bar itself, where six full labels would not fit. */
+  short: string;
+  /** The instruction sent to the model. */
   instruction: string;
 }
 
-/** Output rules shared by every action, so none of them drifts. */
-const OUTPUT_RULES = [
-  "Output ONLY the rewritten passage.",
-  "No preamble, no explanation, no commentary.",
-  "Never wrap the output in code fences or quotes.",
-  "Keep the author's meaning, tone and language.",
-  "Preserve the Markdown the passage already uses (emphasis, links, code spans).",
-].join(" ");
-
-export const SELECTION_ACTIONS: SelectionAction[] = [
+/** The preset operations, verbatim from the reference implementation. */
+export const SELECTION_PRESETS: SelectionAction[] = [
   {
-    id: "rewrite",
-    label: "Rewrite",
-    instruction: `Rewrite the passage so it reads more clearly, without changing what it says. ${OUTPUT_RULES}`,
+    id: "rephrase",
+    short: "Rephrase",
+    label: "Rephrase",
+    instruction:
+      "Rephrase the selected text while keeping its meaning and style consistent with the surrounding text.",
   },
   {
     id: "shorten",
+    short: "Shorten",
     label: "Shorten",
-    instruction: `Shorten the passage, keeping only what it needs to say. ${OUTPUT_RULES}`,
+    instruction:
+      "Shorten the selected text, keeping the essential meaning. Aim for roughly half the length.",
+  },
+  {
+    id: "expand",
+    short: "Expand",
+    label: "Expand",
+    instruction:
+      "Expand the selected text with more detail and depth, keeping the same style and tone.",
+  },
+  {
+    id: "formal",
+    short: "Formal",
+    label: "Make more formal",
+    instruction: "Rewrite the selected text to be more formal and professional.",
+  },
+  {
+    id: "grammar",
+    short: "Grammar",
+    label: "Fix grammar and spelling",
+    instruction:
+      "Fix grammar, spelling, and punctuation errors in the selected text. Change as little as possible.",
+  },
+  {
+    id: "latex",
+    short: "LaTeX",
+    label: "Convert math to LaTeX",
+    instruction:
+      "Convert any math in the selected text to LaTeX notation ($...$ inline, $$...$$ block). Keep the surrounding prose unchanged.",
   },
 ];
 
-/** A rewrite is far longer than a completion, so it gets its own ceiling. */
-export const SELECTION_MAX_TOKENS = 700;
+/** The system prompt, verbatim from the reference implementation. */
+export const REWRITE_SYSTEM_PROMPT =
+  "You rewrite text according to the user's instruction. The text to rewrite is marked with <selected> and </selected>; the surrounding <context_before>/<context_after> blocks are provided for style and continuity only.\n" +
+  "Output ONLY the rewritten text for the selected part — no explanations, no meta-text, no markers. Preserve markdown formatting. Keep the original language unless the instruction says otherwise. Write in Markdown: preserve headings and list structure, putting each numbered list item on its own line, always starting a new line after a heading before body text — never expand a heading or rubric into a large body.";
+
+/** Characters of context kept on each side of the selection. */
+export const CONTEXT_LIMIT = 8000;
+
+/** Reasoning tokens count against the budget, so a rewrite gets real headroom. */
+export const SELECTION_MAX_TOKENS = 4000;
+
+export interface RewriteRequest {
+  /** What to do — a preset instruction, or whatever the user typed. */
+  instruction: string;
+  /** The selected text, exactly as rendered. */
+  selection: string;
+  /** Markdown before the selection, for style and continuity only. */
+  before: string;
+  /** Markdown after the selection. */
+  after: string;
+}
 
 /**
- * Find an action by id.
+ * Find a preset by id.
  *
- * @param id - The action id, usually a button's `data-action`.
- * @returns The action, or null when nothing matches.
+ * @param id - The preset id, usually a button's `data-action`.
+ * @returns The preset, or null when nothing matches.
  */
-export const findAction = (id: string): SelectionAction | null =>
-  SELECTION_ACTIONS.find((action) => action.id === id) ?? null;
+export const findPreset = (id: string): SelectionAction | null =>
+  SELECTION_PRESETS.find((preset) => preset.id === id) ?? null;
 
 /**
- * Build the request for one action.
+ * Build the request for one rewrite.
  *
- * The passage is the whole request. An earlier version also sent the surrounding
- * block under a "For context, it sits in:" heading, and that single line is what
- * broke the feature: measured against the live endpoint, the context-bearing shape
- * returned `finish_reason: length` with an EMPTY content after spending the entire
- * 700-token budget on reasoning (and 2000 when given 2000), while the same request
- * without it stopped at 69-270 reasoning tokens with a real answer. A passage-only
- * request answered correctly in every shape tested. Do not re-add the context
- * without re-probing this endpoint.
- *
- * @param action - The action to perform.
- * @param passage - The selected text, exactly as rendered.
+ * @param input - The instruction, the selected text and its neighbours.
  * @returns The messages to send.
  */
-export function buildSelectionMessages(action: SelectionAction, passage: string): ChatMessage[] {
+export function buildRewriteMessages(input: RewriteRequest): ChatMessage[] {
+  const before = input.before.slice(-CONTEXT_LIMIT);
+  const after = input.after.slice(0, CONTEXT_LIMIT);
   return [
-    { role: "system", content: action.instruction },
-    { role: "user", content: passage },
+    { role: "system", content: REWRITE_SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: [
+        `Instruction: ${input.instruction}`,
+        "",
+        before ?
+          `<context_before>\n${before}\n</context_before>`
+        : "<context_before></context_before>",
+        "",
+        `<selected>\n${input.selection}\n</selected>`,
+        "",
+        after ? `<context_after>\n${after}\n</context_after>` : "<context_after></context_after>",
+      ].join("\n"),
+    },
   ];
 }

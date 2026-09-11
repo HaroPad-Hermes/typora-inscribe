@@ -10,6 +10,8 @@ export interface OpenAICompatibleSettings {
   model: string;
   temperature: number;
   maxTokens: number;
+  /** Send `thinking: {type: "disabled"}`; required for DeepSeek V4 Flash. */
+  disableThinking?: boolean;
 }
 
 /** The FIM endpoint is a sibling of the versioned chat base:
@@ -24,6 +26,17 @@ export class OpenAICompatibleProvider implements Provider {
 
   constructor(settings: OpenAICompatibleSettings) {
     this.settings = settings;
+  }
+
+  /**
+   * Extra request parameters, including the reasoning control.
+   *
+   * @param thinking - A per-request override, or undefined to use the setting.
+   * @returns The parameters to spread into the request body.
+   */
+  private buildExtraParams(thinking?: "enabled" | "disabled"): Record<string, unknown> {
+    const mode = thinking ?? (this.settings.disableThinking ? "disabled" : undefined);
+    return mode ? { thinking: { type: mode } } : {};
   }
 
   async generateOnce(messages: ChatMessage[], opts: GenerateOnceOptions): Promise<string> {
@@ -42,6 +55,7 @@ export class OpenAICompatibleProvider implements Provider {
         temperature: opts.temperature ?? this.settings.temperature,
         max_tokens: opts.maxTokens ?? this.settings.maxTokens,
         stream: false,
+        ...this.buildExtraParams(opts.thinking),
       }),
       signal: controller.signal,
     });

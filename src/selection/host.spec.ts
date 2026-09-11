@@ -119,9 +119,15 @@ describe("attachSelectionActions (end to end, fake editor)", () => {
     select("p", 0, 7); // "the cat"
     document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
 
-    const menu = document.querySelector(".inscribe-selection-menu");
-    expect(menu).not.toBeNull();
-    const rewrite = menu!.querySelector<HTMLButtonElement>("[data-action='rewrite']");
+    // The bar is debounced (350ms) so it never chases the drag.
+    await vi.waitFor(
+      () => {
+        expect(document.querySelector(".inscribe-selection-menu")).not.toBeNull();
+      },
+      { timeout: 2000 },
+    );
+    const menu = document.querySelector(".inscribe-selection-menu")!;
+    const rewrite = menu.querySelector<HTMLButtonElement>("[data-action='rephrase']");
     expect(rewrite).not.toBeNull();
 
     // Nothing is written while the model is answering, or before consent.
@@ -152,7 +158,13 @@ describe("attachSelectionActions (end to end, fake editor)", () => {
     const detach = attachSelectionActions({ generate: () => Promise.resolve(ANSWER) });
     select("p", 0, 7);
     document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-    document.querySelector<HTMLButtonElement>("[data-action='rewrite']")!.click();
+    await vi.waitFor(
+      () => {
+        expect(document.querySelector("[data-action='rephrase']")).not.toBeNull();
+      },
+      { timeout: 2000 },
+    );
+    document.querySelector<HTMLButtonElement>("[data-action='rephrase']")!.click();
     await vi.waitFor(() => {
       expect(document.querySelector(".inscribe-selection-preview")).not.toBeNull();
     });
@@ -175,7 +187,13 @@ describe("attachSelectionActions (end to end, fake editor)", () => {
     const detach = attachSelectionActions({ generate: () => Promise.resolve(ANSWER) });
     select("p", 0, 3);
     document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-    document.querySelector<HTMLButtonElement>("[data-action='rewrite']")!.click();
+    await vi.waitFor(
+      () => {
+        expect(document.querySelector("[data-action='rephrase']")).not.toBeNull();
+      },
+      { timeout: 2000 },
+    );
+    document.querySelector<HTMLButtonElement>("[data-action='rephrase']")!.click();
 
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(document.querySelector(".inscribe-selection-preview")).toBeNull();
